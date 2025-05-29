@@ -1,4 +1,4 @@
-# WahrCo.de Crew - OpenAI to Z Challenge Flow
+# WahrCo.de Crew — OpenAI to Z Challenge Flow
 
 Welcome to the WahrCo.de Crew to Z Crew project, powered by [crewAI](https://crewai.com). 
 A multi-agent AI system that also uses tools and direct llm calls to collaborate effectively on the task: 
