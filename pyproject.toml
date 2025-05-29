@@ -5,10 +5,11 @@ description = "Remote Sensing Archaeological workflow based on CrewAI Flow"
 authors = [{ name = "Anatol Bivol" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "boto3>=1.38.23",
+    "boto3>=1.38.25",
     "crewai-tools>=0.45.0",
-    "crewai[tools]>=0.121.0,<1.0.0",
+    "crewai[tools]>=0.121.1,<1.0.0",
     "duckduckgo-search>=8.0.2",
+    "hatchling>=1.27.0",
     "sentinelhub>=3.11.1",
 ]
 
