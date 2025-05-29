@@ -66,15 +66,21 @@ class Image(BaseModel):
     label: str = Field(description="Image type")
     url: str = Field(description="Image url")
 
-# Define our flow state
+class UserInput(BaseModel):
+    lat: float = Field(description="Latitude of the potential site")
+    lon: float = Field(description="Longitude of the potential site")
+    radius: int = Field(description="Radius of the potential site in meters")
+
 class RemoteSensingState(BaseModel):
     images: List[Image] = []
     potential_site: PotentialSite = None
     image_analysis: ImageAnalysis = None
     cross_verification: str = None
+    user_input: UserInput = None
+    prompt_log: List[str] = Field(default_factory=list, description="Prompt log")
 
 
-def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False):
+def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False) -> str:
     """
     Create a safe filename by replacing invalid characters
     """
@@ -91,7 +97,6 @@ def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = F
 
 
 def get_markdown_potential_site(potential_site: PotentialSite) -> str:
-    # Markdown template
     template_str = """
     ### 🏷️ Potential Site
 
@@ -123,7 +128,45 @@ def get_markdown_potential_site(potential_site: PotentialSite) -> str:
     {% endfor %}
     """
 
-    # Render and save
     template = Template(template_str)
     md_content = template.render(site=potential_site)
+    return md_content
+
+
+def get_markdown_image_analysis(image_analysis: ImageAnalysis) -> str:
+    template_str = """
+    # 🧠 Image Analysis Summary
+
+    ## 🔍 Raw Analysis
+    
+    {{ analysis.analysis_raw }}
+    
+    {% if analysis.hotspots %}
+    ## 📌 Hotspots
+    
+    {% for h in analysis.hotspots %}
+    ### 🔸 Hotspot {{ loop.index }}
+    
+    - **Latitude:** {{ h.lat }}
+    - **Longitude:** {{ h.lon }}
+    - **Radius:** {{ h.radius }} meters
+    - **Rationale:** {{ h.rationale }}
+    - **Score:** {{ h.score }} / 100
+    
+    {% if h.maps %}
+    **Maps:**
+    {% for m in h.maps %}
+    - [Map {{ loop.index }}]({{ m }})
+    {% endfor %}
+    {% endif %}
+    
+    ---
+    {% endfor %}
+    {% else %}
+    _No hotspots identified._
+    {% endif %}
+    """
+
+    template = Template(template_str)
+    md_content = template.render(analysis=image_analysis)
     return md_content

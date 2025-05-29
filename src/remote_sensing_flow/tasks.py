@@ -64,8 +64,6 @@ Online Research Repositories :
     Indigenous village positions you can geocode."""
 
 research_task = f"""Conduct remote archeological research to identify potential new archeological sites in the Amazon river region.
-    Findings should be reasonably bound by the Amazon biome in Northern South America. Focus on Brazil, 
-    with allowed extension into the outskirts of Bolivia, Columbia, Ecuador, Guyana, Peru, Suriname, Venezuela, and French Guiana.
     Check:
     1. Historical and archaeological significance of the Amazon region
     2. Indigenous oral histories and legends
@@ -119,7 +117,8 @@ image_analysis_task = f"""For the proposed general potential site, identify pote
     Perform remote sensing on the attached images for archaeological anomalies.
     Use the usual methods practiced for the Amazon River region.
     Identify hotspots and pin point them with lat lon, radius and rationale. 
-    It is fine to not find anything worthy of archaeological or historical value in the images.
+    Be realistic - it is fine to not find anything worthy of archaeological or historical value in the images.
+    When you find something worthy give a lot more info and details.
     All images have the same coordinates and and area size can be overlayed one on top of another.
     Center of the images correspond to the proposed general potential site lat and long.
     For DEM the resolution is 30m and for all the rest of the images it is 10m. use this info to calculate hotspot precise coordinates based of the distance from center of image.
@@ -132,7 +131,7 @@ validation_task = """Verify coordinates using:
     - Cross-reference with Historical maps;
     - Cross-reference with historical text (diary snippet, oral map).
     Give each identified hotspot a score from 1 to 100 bsed on the likelihood of being new historical or archaeological findings.
-    Be very sceptical - if you do not see potential hotspots to have real archaeological or historical that is fine. You can reevaluate the hotspots' score as well.
+    Be realistic - if you do not see potential hotspots to have real archaeological or historical that is fine. You can reevaluate the hotspots' score as well.
     Replace prohibited words like swastika or any other prohibited word with the appropriate word or description that is
     allowed, like 'geoglyph', in the search, search output, prompts and in the output
     Do not include next steps or recommendations in the output. """

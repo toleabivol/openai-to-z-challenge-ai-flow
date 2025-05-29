@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 import tempfile
 import boto3
@@ -12,7 +13,8 @@ from sentinelhub import (
     bbox_to_dimensions, SHConfig
 )
 import logging
-
+LOGGER = logging.getLogger('remote_sensing_flow_s_hub_png')
+LOGGER.setLevel(logging.DEBUG)
 load_dotenv()
 
 
@@ -181,7 +183,7 @@ class SentinelS3PngUploader(BaseTool):
         s3 = boto3.client('s3')
         bucket_name = os.getenv("S3_DATA_BUCKET")
 
-        logging.info(f'Requesting sentinel hub for {label}')
+        LOGGER.info(f'Requesting sentinel hub for {label}')
         tmp_output_folder = tempfile.mkdtemp(label)
         data_collection = DataCollection.SENTINEL2_L2A
         resolution = 10
@@ -195,7 +197,7 @@ class SentinelS3PngUploader(BaseTool):
             # resolution = 30
 
         size = bbox_to_dimensions(bbox, resolution=resolution)
-        logging.info(size)
+        LOGGER.info(size)
 
         request = SentinelHubRequest(
             evalscript=script,
@@ -229,15 +231,18 @@ class SentinelS3PngUploader(BaseTool):
 
         if not png_path:
             raise FileNotFoundError(f"PNG file not found in {tmp_output_folder} for {label}.")
-        logging.info(f'Uploading to s3 {label}')
+        LOGGER.info(f'Uploading to s3 {label}')
         filename = create_safe_filename(f"{label}_{lat}_{lon}_{date_from}_{date_to}", '.png', True)
         key = f"sentinel_hub/{filename}"
-        s3.upload_file(png_path, bucket_name, key)
-        s3_url = s3.generate_presigned_url(
+
+        await asyncio.to_thread(s3.upload_file, png_path, bucket_name, key)
+
+        s3_url = await asyncio.to_thread(s3.generate_presigned_url,
             'get_object',
             Params={'Bucket': bucket_name, 'Key': key},
             ExpiresIn=7200
         )
+
         if output_folder:
             self.copy_and_rename(png_path, output_folder, filename)
         shutil.rmtree(tmp_output_folder)
@@ -255,4 +260,4 @@ class SentinelS3PngUploader(BaseTool):
 if __name__ == "__main__":
     tool = SentinelS3PngUploader()
     result = tool._run(lat=-7.95, lon=-67.3, radius_in_meters=20000)
-    logging.info(result)
+    LOGGER.info(result)
