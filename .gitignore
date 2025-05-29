@@ -1,0 +1,10 @@
+.env
+__pycache__/
+lib/
+.DS_Store
+.venv
+data/
+.idea/
+
+output/
+src/output/

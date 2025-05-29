@@ -1,0 +1,25 @@
+[project]
+name = "remote_sensing_flow"
+version = "0.4.0"
+description = "Remote Sensing Archaeological workflow based on CrewAI Flow"
+authors = [{ name = "Anatol Bivol" }]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.38.23",
+    "crewai-tools>=0.45.0",
+    "crewai[tools]>=0.121.0,<1.0.0",
+    "duckduckgo-search>=8.0.2",
+    "sentinelhub>=3.11.1",
+]
+
+[project.scripts]
+kickoff = "remote_sensing_flow.main:kickoff"
+run_crew = "remote_sensing_flow.main:kickoff"
+plot = "remote_sensing_flow.main:plot"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.crewai]
+type = "flow"
