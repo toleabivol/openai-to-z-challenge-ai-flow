@@ -1,0 +1,1 @@
+No hotspots identified. Skipping cross verification.

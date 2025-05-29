@@ -1,0 +1,4 @@
+- Confirmed Potential Site: None (no archaeological features detected at lat -2.5023, lon -54.6931)  
+- Confidence Score: 10/100 – very low likelihood that the area contains uncharted ring-ditch earthworks  
+- Comparison: Unlike confirmed Amazonian ring-ditch sites (e.g., Kuhikugu complex near Xingu River), this location lacks any terrain or spectral anomalies characteristic of human‐made ditch or mound structures  
+- Recommendation: No further field investigation warranted unless new geophysical or excavation data arise
