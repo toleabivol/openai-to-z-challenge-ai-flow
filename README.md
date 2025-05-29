@@ -35,3 +35,4 @@ crewai run
 This command initializes the `remote_sensing_flow` Flow.
 
 The result will be a folder with satellite images and .md files (mainly `report.md`) in the `output/{potential_site_name}/`.
+See `output_example/`
