@@ -1,50 +1,18 @@
 import datetime
 import os
 from typing import List
+from litellm import ContentPolicyViolationError
 from pydantic import BaseModel, Field
 from crewai import Agent
 from crewai.flow.flow import Flow, listen, start
 
 
 from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini
-from remote_sensing_flow.constants import research_task, validation_task, reporting_task, \
+from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
 from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader
-
-
-
-class Hotspot(BaseModel):
-    lat: float = Field(description="Precise Latitude of the hotspot")
-    lon: float = Field(description="Precise Longitude of the hotspot")
-    radius: int = Field(description="Precise Radius of the hotspot")
-    rationale: str = Field(description="Reasoning behind the selection of this hotspot. Backed up by image analysis.")
-    maps: List[str] = Field(description="List of maps urls that show the hotspot. Zoomed at the relevant level and in satellite view. Bing, google or ArcGis.")
-    score: int = Field(description="Likelihood of an architectural or historical new finding. Score from 1 to 100.")
-
-class ImageAnalysis(BaseModel):
-    analysis_raw: str = Field(description="Raw text of the image analysis output")
-    hotspots: List[Hotspot] = Field(description="List of hotspots or precis point of interest with anomalies that are relevant to the potential site")
-
-class PotentialSite(BaseModel):
-    name: str = Field(description="Name of the potential site")
-    lat: float = Field(description="Latitude of the potential site")
-    lon: float = Field(description="Longitude of the potential site")
-    radius: int = Field(description="Radius of the potential site in meters")
-    rationale: str = Field(description="Reasoning behind the selection of this potential site")
-    maps: List[str] = Field(description="List of maps urls that show the potential site. Bing, google or ArcGis.")
-    sources: List[str] = Field(description="List of sources that support the selection of this potential site")
-
-class Image(BaseModel):
-    label: str = Field(description="Image type")
-    url: str = Field(description="Image url")
-
-# Define our flow state
-class RemoteSensingState(BaseModel):
-    images: List[Image] = []
-    potential_site: PotentialSite = None
-    image_analysis: ImageAnalysis = None
-    cross_verification: str = None
+from remote_sensing_flow.helpers import RemoteSensingState, get_markdown_potential_site,  PotentialSite,  Image,  ImageAnalysis
 
 class RemoteSensingFlow(Flow[RemoteSensingState]):
 
@@ -81,7 +49,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
         site_file_path = os.path.join(self.output_folder, f"site.md")
         with open(site_file_path, "w") as f:
-            f.write(str(result.pydantic))
+            f.write(str(get_markdown_potential_site(self.state.potential_site)))
 
         return {"potential_site": result.pydantic}
 
@@ -137,9 +105,8 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         response = llm.call(messages=messages)
 
         print(response)
-        print(type(response))
 
-        self.state.image_analysis = response
+        self.state.image_analysis = ImageAnalysis.model_validate_json(response)
 
         image_analysis_file_path = os.path.join(self.output_folder, f"image_analysis.md")
         with open(image_analysis_file_path, "w") as f:
@@ -150,36 +117,44 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     @listen(analyze_images)
     async def cross_verify(self, analysis):
         print("Cross verifying data...")
-        if not self.state.image_analysis.hotspots:
-            print("No hotspots identified")
-
-        validator = Agent(
-            role="Validation Agent",
-            goal="Confirm coordinates through at least two independent methods",
-            backstory="Geospatial data integrity expert",
-            llm=get_llm_azure(model_o4_mini),
-            tools=[SearchTool()],
-            verbose=True,
-        )
-
-        result = await validator.kickoff_async(
-            f"""{validation_task} . 
-            Potential site: 
-            - lat: {self.state.potential_site.lat};
-            - lon: {self.state.potential_site.lon};
-            - radius: {self.state.potential_site.radius};
-            - rationale: {self.state.potential_site.rationale};
-            - public sources: {self.state.potential_site.sources}.
-            Image Analysis: {self.state.image_analysis}
-            """)
-
-        self.state.cross_verification = result.raw
-
         validation_file_path = os.path.join(self.output_folder, f"validation.md")
-        with open(validation_file_path, "w") as f:
-            f.write(result.raw)
+        if not self.state.image_analysis.hotspots:
+            print("No hotspots identified. Skipping cross verification.")
+            self.state.cross_verification = "No hotspots identified. Skipping cross verification."
+        else:
+            validator = Agent(
+                role="Validation Agent",
+                goal="Confirm coordinates through at least two independent methods",
+                backstory="Geospatial data integrity expert",
+                llm=get_llm_azure(model_o4_mini),
+                tools=[SearchTool()],
+                verbose=True,
+            )
+            validation_prompt = f"""{validation_task} . 
+                    Potential site: 
+                    - lat: {self.state.potential_site.lat};
+                    - lon: {self.state.potential_site.lon};
+                    - radius: {self.state.potential_site.radius};
+                    - rationale: {self.state.potential_site.rationale};
+                    - public sources: {self.state.potential_site.sources}.
+                    Image Analysis: {self.state.image_analysis}
+                    """
+            try:
+                result = await validator.kickoff_async(validation_prompt)
+            except ContentPolicyViolationError as e:
+                print("Error in validation", e)
+                result = f"No cross verification performed due to prompt content policy violation."
+                self.state.cross_verification = result
+            else:
+                self.state.cross_verification = result.raw
 
-        return {"cross_verification": result.raw}
+            with open(validation_file_path, "w") as f:
+                f.write(f" Prompt: {validation_prompt}.")
+
+        with open(validation_file_path, "a") as f:
+            f.write(self.state.cross_verification)
+
+        return {"cross_verification": self.state.cross_verification}
 
     @listen(cross_verify)
     async def report(self, analysis):
@@ -192,14 +167,11 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             llm=get_llm_azure(model_o4_mini),  # TODO use model o3 or o4 recommended, keeping mini for testing costs reduction
             verbose=True,
         )
-        print("=========")
-        print(f"{self.state.potential_site}")
-        print("=========")
         result = await reporter.kickoff_async(f"{reporting_task} . Potential site: {self.state.potential_site}. "
                                               f"Satellite imagery analysis: {self.state.image_analysis}. "
                                               f"Cross Verification: {self.state.cross_verification}")
 
-        report_file_path = os.path.join(self.output_folder, f"report_{datetime.datetime.now()}.md")
+        report_file_path = os.path.join(self.output_folder, "report.md")
         with open(report_file_path, "w") as f:
             f.write(result.raw)
 

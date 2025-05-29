@@ -1,5 +1,10 @@
+from pydantic import Field
+from typing import List
 from crewai import LLM
 from litellm import drop_params
+from pathlib import Path
+from jinja2 import Template
+from pydantic import BaseModel
 
 # Models. Price per 1M Tokens: Input | Cached Input | Output
 model_41 = "gpt-4.1"  # $2.00 $0.50 $8.00
@@ -24,3 +29,73 @@ def get_llm_azure(model_name: str) -> LLM:
         drop_params=True,
         verbose=True,
     )
+
+class Hotspot(BaseModel):
+    lat: float = Field(description="Precise Latitude of the hotspot")
+    lon: float = Field(description="Precise Longitude of the hotspot")
+    radius: int = Field(description="Precise Radius of the hotspot")
+    rationale: str = Field(description="Reasoning behind the selection of this hotspot. Backed up by image analysis.")
+    maps: List[str] = Field(description="List of maps urls that show the hotspot. Zoomed at the relevant level and in satellite view. Bing, google or ArcGis.")
+    score: int = Field(description="Likelihood of an architectural or historical new finding. Score from 1 to 100.")
+
+class ImageAnalysis(BaseModel):
+    analysis_raw: str = Field(description="Raw text of the image analysis output")
+    hotspots: List[Hotspot] = Field(description="List of hotspots or precis point of interest with anomalies that are relevant to the potential site")
+
+class PotentialSite(BaseModel):
+    name: str = Field(description="Name of the potential site")
+    lat: float = Field(description="Latitude of the potential site")
+    lon: float = Field(description="Longitude of the potential site")
+    radius: int = Field(description="Radius of the potential site in meters")
+    rationale: str = Field(description="Reasoning behind the selection of this potential site")
+    maps: List[str] = Field(description="List of maps urls that show the potential site. Bing, google or ArcGis.")
+    sources: List[str] = Field(description="List of sources that support the selection of this potential site")
+
+class Image(BaseModel):
+    label: str = Field(description="Image type")
+    url: str = Field(description="Image url")
+
+# Define our flow state
+class RemoteSensingState(BaseModel):
+    images: List[Image] = []
+    potential_site: PotentialSite = None
+    image_analysis: ImageAnalysis = None
+    cross_verification: str = None
+
+def get_markdown_potential_site(potential_site: PotentialSite) -> str:
+    # Markdown template
+    template_str = """
+    ### 🏷️ Potential Site
+
+    **Name:** `{{ site.name }}`  
+    **Latitude:** `{{ site.lat }}`  
+    **Longitude:** `{{ site.lon }}`  
+    **Radius:** `{{ site.radius }} meters`
+
+    ---
+
+    #### 🧠 Rationale
+
+    {{ site.rationale }}
+
+    ---
+
+    #### 🗺️ Maps
+
+    {% for url in site.maps %}
+    - [{{ url }}]({{ url }})
+    {% endfor %}
+
+    ---
+
+    #### 📚 Sources
+
+    {% for src in site.sources %}
+    - {{ src }}
+    {% endfor %}
+    """
+
+    # Render and save
+    template = Template(template_str)
+    md_content = template.render(site=potential_site)
+    return md_content

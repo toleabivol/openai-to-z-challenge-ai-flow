@@ -13,6 +13,7 @@ from sentinelhub import (
 
 load_dotenv()
 
+
 class SentinelS3PngUploader(BaseTool):
     name: str = "Sentinel HUB S3 URL"
     description: str = ("Fetches Sentinel-2, Landsat-8-9 and Copernicus DEM data and uploads PNGs to S3 and returns S3 "
@@ -21,7 +22,6 @@ class SentinelS3PngUploader(BaseTool):
     def _run(self, lat: float, lon: float, radius_in_meters: int, output_folder: str = None):
         delta_deg = radius_in_meters / 111_000.0
         bbox = BBox((lon - delta_deg, lat - delta_deg, lon + delta_deg, lat + delta_deg), crs=CRS.WGS84)
-
 
         config = SHConfig()
         config.instance_id = os.environ.get("SENTINEL_HUB_INSTANCE_ID")
@@ -39,7 +39,21 @@ class SentinelS3PngUploader(BaseTool):
         timestamp = datetime.now().isoformat()
 
         evalscripts = {
+            #  DEM values are in meters and can be negative for areas which lie below sea level,
+            #  so it is recommended to set the output format in your evalscript to FLOAT32.
+            # But we cannot do that since FLOAT32 does not work with PNG but only with TIFF
             "copernicus_dem": """
+                function setup() {
+                  return {
+                    input: ["DEM"],
+                    output: { bands: 1 }
+                  }
+                }
+                function evaluatePixel(sample) {
+                  return [sample.DEM/1000]
+                }
+            """,
+            "mapzen_dem": """
                 function setup() {
                   return {
                     input: ["DEM"],
@@ -67,28 +81,18 @@ class SentinelS3PngUploader(BaseTool):
                    return [3.5 * s.B04, 3.5 * s.B03, 3.5 * s.B02]  // 3.5 factor to increase brightness
                 }
             """,
-            "landsat89_l2_thermal_band": """
+            # False Color Composite (NIR, Red, Green)
+            "landsat89_l2_false_color": """
                 //VERSION=3
-                let minVal = 200
-                let maxVal = 375
-
-                let viz = ColorGradientVisualizer.createBlueRed(minVal, maxVal)
-
                 function setup() {
                     return {
-                        input: [{
-                            bands: ["B10", "dataMask"]
-                        }],
-                        output: {
-                            bands: 4
-                        }
+                        input: ["B05", "B04", "B03"],
+                        output: { bands: 3 }
                     };
                 }
-                function evaluatePixel(samples) {
-                    let val = samples.B10
-                    val = viz.process(val)
-                    val.push(samples.dataMask)
-                    return val
+                
+                function evaluatePixel(sample) {
+                    return [sample.B05, sample.B04, sample.B03];
                 }
             """,
             "s2_l2a_true_color": """
@@ -106,6 +110,22 @@ class SentinelS3PngUploader(BaseTool):
                 }
                 function evaluatePixel(s) {
                    return [3.5 * s.B04, 3.5 * s.B03, 3.5 * s.B02]  // 3.5 factor to increase brightness
+                }
+            """,
+            "s2_l2a_false_color": """
+                //VERSION=3
+                function setup() {
+                    return {
+                        input: [{
+                            bands: ["B08", "B04", "B03"]
+                        }],
+                        output: {
+                            bands: 3
+                        }
+                    };
+                }
+                function evaluatePixel(s) {
+                   return [s.B08, s.B04, s.B03]
                 }
             """,
             "s2_l2a_B08_nir": """
@@ -162,6 +182,9 @@ class SentinelS3PngUploader(BaseTool):
             elif label == 'copernicus_dem':
                 data_collection = DataCollection.DEM_COPERNICUS_30
                 resolution = 30
+            elif label == 'mapzen_dem':
+                data_collection = DataCollection.DEM_MAPZEN
+                resolution = 30
 
             size = bbox_to_dimensions(bbox, resolution=resolution)
             print(size)
@@ -216,7 +239,6 @@ class SentinelS3PngUploader(BaseTool):
         # Rename the copied file
         new_path = f"{dest_path}/{new_name}"
         shutil.move(f"{dest_path}/{old_filename}", new_path)
-
 
 
 if __name__ == "__main__":

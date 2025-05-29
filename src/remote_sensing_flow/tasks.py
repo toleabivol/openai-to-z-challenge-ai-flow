@@ -90,7 +90,7 @@ research_task = f"""Conduct remote archeological research to identify potential 
     One potential new archeological site based on the research with highest probability 
     of new findings. The output should be a short name, a list of coordinates 
     (latitude, longitude, radius) in WGS84 format followed by a short rationale, followed by direct 
-    links to the google, bing and https://livingatlas.arcgis.com/wayback/#active=34007&mapCenter={{long}}%2C{{lat}}%2C14 maps with satellite layer and proper zoom level, 
+    links to the google, bing, sentinel hub https://apps.sentinel-hub.com/eo-browser/?zoom={{zoom}}&lat={{lat}}&lng={{lang}} and livingatlas https://livingatlas.arcgis.com/wayback/#active=34007&mapCenter={{long}}%2C{{lat}}%2C14 maps with satellite layer and proper zoom level, 
     followed by urls to public resources to back the rationale. Must have at least one historical map or text."""
 
 data_collection_task ="""For the potential new archeological site proposed, collect following satellite imagery : 
@@ -142,4 +142,5 @@ reporting_task = """Produce final report with:
     - Confidence scoring 1-100 where 1 is not likely and 100 is likely that the potential site is worth further investigation;
     - Compares the discovery to an already known archaeological feature;
     Verified report with confirmed coordinates and recommendations. 
-    Include also the google, bing and livingatlas.arcgis.com/wayback/ maps link to the coordinates."""
+    Include also the google, bing, sentinel hub, livingatlas map links to the coordinates.
+    If no hotspots identified by the validation or image analysis keep the report short as you do not have any confirmed potential site and report a false finding."""
