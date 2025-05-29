@@ -38,9 +38,20 @@ class Hotspot(BaseModel):
     maps: List[str] = Field(description="List of maps urls that show the hotspot. Zoomed at the relevant level and in satellite view. Bing, google or ArcGis.")
     score: int = Field(description="Likelihood of an architectural or historical new finding. Score from 1 to 100.")
 
+    def to_prompt_str(self, show_maps: bool = False) -> str:
+        out = f"{self.label} @ ({self.lat}, {self.lon})\n"
+        out += f"Rationale: {self.rationale}\n"
+        if show_maps:
+            out += "Maps:\n" + "\n".join(f"- {m}" for m in self.maps) + "\n"
+        out += "Sources:\n" + "\n".join(f"- {s}" for s in self.sources)
+        return out
+
 class ImageAnalysis(BaseModel):
     analysis_raw: str = Field(description="Raw text of the image analysis output")
     hotspots: List[Hotspot] = Field(description="List of hotspots or precis point of interest with anomalies that are relevant to the potential site")
+
+    def to_prompt_str(self, show_maps=False):
+        return self.analysis_raw + "\n\n".join(h.to_prompt_str(show_maps=show_maps) for h in self.hotspots)
 
 class PotentialSite(BaseModel):
     name: str = Field(description="Name of the potential site")

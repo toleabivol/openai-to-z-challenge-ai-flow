@@ -1,6 +1,7 @@
 import shutil
 import tempfile
 import boto3
+from asyncio import Task, create_task, gather, to_thread
 from crewai.tools import BaseTool
 from dotenv import load_dotenv
 import os
@@ -10,6 +11,7 @@ from sentinelhub import (
     MosaickingOrder, SentinelHubRequest,
     bbox_to_dimensions, SHConfig
 )
+import logging
 
 load_dotenv()
 
@@ -19,7 +21,7 @@ class SentinelS3PngUploader(BaseTool):
     description: str = ("Fetches Sentinel-2, Landsat-8-9 and Copernicus DEM data and uploads PNGs to S3 and returns S3 "
                         "signed urls creating temporarily public image urls.")
 
-    def _run(self, lat: float, lon: float, radius_in_meters: int, output_folder: str = None):
+    async def _run(self, lat: float, lon: float, radius_in_meters: int, output_folder: str = None) -> dict[str,str]:
         delta_deg = radius_in_meters / 111_000.0
         bbox = BBox((lon - delta_deg, lat - delta_deg, lon + delta_deg, lat + delta_deg), crs=CRS.WGS84)
 
@@ -30,12 +32,6 @@ class SentinelS3PngUploader(BaseTool):
 
         if not config.sh_client_id or not config.sh_client_secret:
             raise ValueError("Missing Sentinel Hub credentials")
-
-        date_from = '2023-01-01'
-        date_to = '2025-05-25'
-
-        s3 = boto3.client('s3')
-        bucket_name = os.getenv("S3_DATA_BUCKET")
 
         evalscripts = {
             #  DEM values are in meters and can be negative for areas which lie below sea level,
@@ -168,68 +164,84 @@ class SentinelS3PngUploader(BaseTool):
             """
         }
 
-        result_urls = {}
 
-        resolution = 10
-
+        tasks = []
         for label, script in evalscripts.items():
-            print(f'Requesting sentinel hub for {label}')
-            tmp_output_folder = tempfile.mkdtemp(label)
-            data_collection = DataCollection.SENTINEL2_L2A
-            if label.startswith('landsat'):
-                data_collection = DataCollection.LANDSAT_OT_L2
-            elif label == 'copernicus_dem':
-                data_collection = DataCollection.DEM_COPERNICUS_30
-                resolution = 30
-            elif label == 'mapzen_dem':
-                data_collection = DataCollection.DEM_MAPZEN
-                resolution = 30
+            tasks.append(self.process_image(label, lat, lon, script, config, bbox, output_folder))
+        sentinelhub_results = await gather(*tasks)
 
-            size = bbox_to_dimensions(bbox, resolution=resolution)
-            print(size)
-
-            request = SentinelHubRequest(
-                evalscript=script,
-                input_data=[
-                    SentinelHubRequest.input_data(
-                        data_collection=data_collection,
-                        time_interval=(date_from, date_to),
-                        mosaicking_order=MosaickingOrder.LEAST_CC,
-                    )
-                ],
-                responses=[SentinelHubRequest.output_response("default", MimeType.PNG)],
-                bbox=bbox,
-                size=size,
-                config=config,
-                data_folder=tmp_output_folder,
-            )
-            request.save_data()
-
-            png_path = None
-            for root, _, files in os.walk(tmp_output_folder):
-                for file in files:
-                    if file.endswith('.png'):
-                        png_path = os.path.join(root, file)
-                        break
-                if png_path:
-                    break
-
-            if not png_path:
-                raise FileNotFoundError(f"PNG file not found in {tmp_output_folder} for {label}.")
-            print(f'Uploading to s3 {label}')
-            filename = create_safe_filename(f"{label}_{lat}_{lon}_{date_from}_{date_to}", '.png', True)
-            key = f"sentinel_hub/{filename}"
-            s3.upload_file(png_path, bucket_name, key)
-            result_urls[label] = s3.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': bucket_name, 'Key': key},
-                ExpiresIn=7200
-            )
-            if output_folder:
-                self.copy_and_rename(png_path, output_folder, filename)
-            shutil.rmtree(tmp_output_folder)
+        result_urls = {label: url for label, url in sentinelhub_results}
 
         return result_urls
+
+    async def process_image(self, label, lat, lon, script, config, bbox, output_folder):
+        date_from = '2023-01-01'
+        date_to = '2025-05-25'
+
+        s3 = boto3.client('s3')
+        bucket_name = os.getenv("S3_DATA_BUCKET")
+
+        logging.info(f'Requesting sentinel hub for {label}')
+        tmp_output_folder = tempfile.mkdtemp(label)
+        data_collection = DataCollection.SENTINEL2_L2A
+        resolution = 10
+        if label.startswith('landsat'):
+            data_collection = DataCollection.LANDSAT_OT_L2
+        elif label == 'copernicus_dem':
+            data_collection = DataCollection.DEM_COPERNICUS_30
+            # resolution = 30
+        elif label == 'mapzen_dem':
+            data_collection = DataCollection.DEM_MAPZEN
+            # resolution = 30
+
+        size = bbox_to_dimensions(bbox, resolution=resolution)
+        logging.info(size)
+
+        request = SentinelHubRequest(
+            evalscript=script,
+            input_data=[
+                SentinelHubRequest.input_data(
+                    data_collection=data_collection,
+                    time_interval=(date_from, date_to),
+                    mosaicking_order=MosaickingOrder.LEAST_CC,
+                )
+            ],
+            responses=[SentinelHubRequest.output_response("default", MimeType.PNG)],
+            bbox=bbox,
+            size=size,
+            config=config,
+            data_folder=tmp_output_folder,
+        )
+
+        def request_save_data(s_hub_request):
+            s_hub_request.save_data()
+
+        await to_thread(request_save_data, request)
+
+        png_path = None
+        for root, _, files in os.walk(tmp_output_folder):
+            for file in files:
+                if file.endswith('.png'):
+                    png_path = os.path.join(root, file)
+                    break
+            if png_path:
+                break
+
+        if not png_path:
+            raise FileNotFoundError(f"PNG file not found in {tmp_output_folder} for {label}.")
+        logging.info(f'Uploading to s3 {label}')
+        filename = create_safe_filename(f"{label}_{lat}_{lon}_{date_from}_{date_to}", '.png', True)
+        key = f"sentinel_hub/{filename}"
+        s3.upload_file(png_path, bucket_name, key)
+        s3_url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket_name, 'Key': key},
+            ExpiresIn=7200
+        )
+        if output_folder:
+            self.copy_and_rename(png_path, output_folder, filename)
+        shutil.rmtree(tmp_output_folder)
+        return label, s3_url
 
     def copy_and_rename(self, src_path: str, dest_path: str, new_name: str):
         # Copy the file
@@ -243,4 +255,4 @@ class SentinelS3PngUploader(BaseTool):
 if __name__ == "__main__":
     tool = SentinelS3PngUploader()
     result = tool._run(lat=-7.95, lon=-67.3, radius_in_meters=20000)
-    print(result)
+    logging.info(result)
