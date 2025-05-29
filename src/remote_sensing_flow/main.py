@@ -12,7 +12,8 @@ from remote_sensing_flow.tasks import research_task, validation_task, reporting_
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
 from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader
-from remote_sensing_flow.helpers import RemoteSensingState, get_markdown_potential_site,  PotentialSite,  Image,  ImageAnalysis
+from remote_sensing_flow.helpers import (RemoteSensingState, get_markdown_potential_site,  PotentialSite,  Image,
+                                         ImageAnalysis, create_safe_filename)
 
 class RemoteSensingFlow(Flow[RemoteSensingState]):
 
@@ -44,10 +45,13 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         else:
             print("result", result)
 
-        self.output_folder = os.path.join(self.output_root_folder, f"{self.state.potential_site.lat}_{self.state.potential_site.lon}_{self.state.potential_site.name}_{datetime.datetime.now()}")
+        self.output_folder = os.path.join(
+            self.output_root_folder, create_safe_filename(
+                f"{self.state.potential_site.lat}_{self.state.potential_site.lon}_{self.state.potential_site.name}",
+                timestamp=True))
         os.makedirs(self.output_folder)
 
-        site_file_path = os.path.join(self.output_folder, f"site.md")
+        site_file_path = os.path.join(self.output_folder, "site.md")
         with open(site_file_path, "w") as f:
             f.write(str(get_markdown_potential_site(self.state.potential_site)))
 

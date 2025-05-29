@@ -1,10 +1,10 @@
 from pydantic import Field
 from typing import List
 from crewai import LLM
-from litellm import drop_params
-from pathlib import Path
 from jinja2 import Template
 from pydantic import BaseModel
+import datetime
+import re
 
 # Models. Price per 1M Tokens: Input | Cached Input | Output
 model_41 = "gpt-4.1"  # $2.00 $0.50 $8.00
@@ -61,6 +61,23 @@ class RemoteSensingState(BaseModel):
     potential_site: PotentialSite = None
     image_analysis: ImageAnalysis = None
     cross_verification: str = None
+
+
+def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False):
+    """
+    Create a safe filename by replacing invalid characters
+    """
+    timestamp_str = ''
+    if timestamp:
+        timestamp = datetime.datetime.now()
+        # Format timestamp in a safe way
+        timestamp_str = "_" + timestamp.strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Replace any invalid Windows characters
+    safe_name = re.sub(r'[<>:"/\\|?*\s]', '-', base_name)
+
+    return f"{safe_name}{timestamp_str}{extension}"
+
 
 def get_markdown_potential_site(potential_site: PotentialSite) -> str:
     # Markdown template

@@ -1,10 +1,10 @@
 import shutil
 import tempfile
 import boto3
-from datetime import datetime
 from crewai.tools import BaseTool
 from dotenv import load_dotenv
 import os
+from ..helpers import create_safe_filename
 from sentinelhub import (
     CRS, BBox, DataCollection, MimeType,
     MosaickingOrder, SentinelHubRequest,
@@ -36,7 +36,6 @@ class SentinelS3PngUploader(BaseTool):
 
         s3 = boto3.client('s3')
         bucket_name = os.getenv("S3_DATA_BUCKET")
-        timestamp = datetime.now().isoformat()
 
         evalscripts = {
             #  DEM values are in meters and can be negative for areas which lie below sea level,
@@ -218,7 +217,7 @@ class SentinelS3PngUploader(BaseTool):
             if not png_path:
                 raise FileNotFoundError(f"PNG file not found in {tmp_output_folder} for {label}.")
             print(f'Uploading to s3 {label}')
-            filename = f"{label}_{lat}_{lon}_{date_from}_{date_to}_{timestamp}.png"
+            filename = create_safe_filename(f"{label}_{lat}_{lon}_{date_from}_{date_to}", '.png', True)
             key = f"sentinel_hub/{filename}"
             s3.upload_file(png_path, bucket_name, key)
             result_urls[label] = s3.generate_presigned_url(
