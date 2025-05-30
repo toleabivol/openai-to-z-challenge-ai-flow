@@ -5,9 +5,10 @@ from litellm import ContentPolicyViolationError, BadRequestError
 from crewai import Agent
 from crewai.flow.flow import Flow, listen, start
 import logging
+import argparse
 
-
-from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, get_markdown_image_analysis
+from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, model_o3, \
+    get_markdown_image_analysis, model_41
 from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
@@ -19,6 +20,10 @@ from remote_sensing_flow.helpers import (RemoteSensingState, get_markdown_potent
 #                     datefmt='%Y-%m-%d %H:%M:%S')
 LOGGER = logging.getLogger('remote_sensing_flow')
 LOGGER.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+LOGGER.addHandler(handler)
 
 class RemoteSensingFlow(Flow[RemoteSensingState]):
 
@@ -27,36 +32,41 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
     @start()
     async def user_input(self):
-        LOGGER.info("\n=== Start User Input ===\n")
-        # Ask for user input ask if they want to input lat long radius coordinates or if they let the AI search
-        # for a potential site.
-        while True:
-            response = input("Do you want to input the coordinates of the potential site? (y/n)").lower().strip()
-            if response in ['yes', 'y', '1']:
-                break
-            elif response in ['no', 'n', '0']:
-                return None
-            logging.warning("Please answer with 'yes' or 'no'")
+        if not self.state.user_input:
+            LOGGER.info("\n=== Start User Input ===\n")
+            # Ask for user input ask if they want to input lat long radius coordinates or if they let the AI search
+            # for a potential site.
+            while True:
+                response = input("Do you want to input the coordinates of the potential site? (y/n)").lower().strip()
+                if response in ['yes', 'y', '1']:
+                    break
+                elif response in ['no', 'n', '0']:
+                    return None
+                logging.warning("Please answer with 'yes' or 'no'")
 
-        response = input("Input the coordinates of the potential site. Latitude (float):").lower().strip()
-        self.state.user_input = UserInput(lat=0,lon=0,radius=0)
-        if response:
-            self.state.user_input.lat = float(response)
-        response = input("Input the coordinates of the potential site. Longitude (float):").lower().strip()
-        if response:
-            self.state.user_input.lon = float(response)
-        response = input("Input the coordinates of the potential site. Radius in meters (int):").lower().strip()
-        if response:
-            self.state.user_input.radius = int(response)
+            response = input("Input the coordinates of the potential site. Latitude (float):").lower().strip()
+            self.state.user_input = UserInput(lat=0,lon=0,radius=0,exact=False)
+            if response:
+                self.state.user_input.lat = float(response)
+            response = input("Input the coordinates of the potential site. Longitude (float):").lower().strip()
+            if response:
+                self.state.user_input.lon = float(response)
+            response = input("Input the coordinates of the potential site. Radius in meters (int):").lower().strip()
+            if response:
+                self.state.user_input.radius = int(response)
+            response = input("Coordinates are exact? (y/n):").lower().strip()
+            if response in ['yes', 'y', '1']:
+                self.state.user_input.exact = True
 
         return {"user_input": self.state.user_input}
 
     @listen(user_input)
     async def research(self):
         LOGGER.info("\n=== Start Research ===\n")
-        if self.state.user_input:
-            LOGGER.info('Adding user input proposed coordinates to the prompt')
-            potential_site_input_location = (f"Findings should be in or close to the following coordinates: "
+        if self.state.user_input and not self.state.user_input.no_input:
+            LOGGER.info(f'Adding user input proposed coordinates to the prompt {self.state.user_input}')
+            proximity = "exactly at" if self.state.user_input.exact else "close to"
+            potential_site_input_location = (f"Findings should be {proximity} the following coordinates: "
                                              f"lat {self.state.user_input.lat}; "
                                              f"long {self.state.user_input.lon}; "
                                              f"radius {self.state.user_input.radius}. ")
@@ -76,7 +86,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                      "Do not perform any satellite imagery analysis unless already done by someone else and published.",
                 backstory="Expert in archaeological studies and historical research. Language expert.",
                 tools=[SearchTool()],
-                llm=get_llm_azure(model_o4_mini),
+                llm=get_llm_azure(model_41_mini),
                 verbose=True,
             )
 
@@ -109,8 +119,9 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     @listen(research)
     async def collect_data(self, research_output):
 
+        radius = self.state.potential_site.radius if self.state.user_input.exact else max(self.state.potential_site.radius, 10000)
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
-                                                    max(self.state.potential_site.radius, 10000), self.output_folder)
+                                                    radius, self.output_folder)
         for label, url in images.items():
             self.state.images.append(Image(label=label,url=url))
 
@@ -120,7 +131,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     def analyze_images(self, images: List[Image]):
         LOGGER.info("Analyzing data...")
 
-        llm = get_llm_azure(model_41_mini)
+        llm = get_llm_azure(model_41)
         llm.response_format=ImageAnalysis
 
         analysis_role = "You are a Remote Sensing Analyst. Expert in multispectral satellite imagery analysis."
@@ -140,7 +151,8 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": image.url}
+                    "image_url": {"url": image.url},
+                    "detail": "high"  # want the model to have a better understanding of the image.
                 }
             )
 
@@ -233,9 +245,34 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
         return result
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Remote Sensing Flow CLI")
+    parser.add_argument("--lat", type=float, help="Latitude of the potential site")
+    parser.add_argument("--lon", type=float, help="Longitude of the potential site")
+    parser.add_argument("--radius", type=int, help="Radius in meters around the site")
+    parser.add_argument("--exact", type=bool, help="Coordinates are exact", default=False)
+    parser.add_argument("--ni", type=bool, help="No input. Don't ask for any input", default=False)
+    return parser.parse_args()
+
 def kickoff():
     """Run the guide creator flow"""
-    flow_result = RemoteSensingFlow().kickoff()
+    args = parse_args()
+    if args and args.lat and args.lon and args.radius:
+        flow_result = RemoteSensingFlow().kickoff(inputs={
+            "user_input": {
+                "lat": args.lat,
+                "lon": args.lon,
+                "radius": args.radius,
+                "exact": args.exact
+            }})
+    elif args.ni:
+        flow_result = RemoteSensingFlow().kickoff(inputs={
+            "user_input": {
+                "no_input": True
+            }
+        })
+    else:
+        flow_result = RemoteSensingFlow().kickoff()
     LOGGER.info(flow_result)
     LOGGER.info("\n=== Flow Complete ===")
 

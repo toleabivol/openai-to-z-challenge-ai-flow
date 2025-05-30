@@ -2,7 +2,7 @@ import asyncio
 import shutil
 import tempfile
 import boto3
-from asyncio import Task, create_task, gather, to_thread
+from asyncio import gather, to_thread
 from crewai.tools import BaseTool
 from dotenv import load_dotenv
 import os
@@ -15,6 +15,10 @@ from sentinelhub import (
 import logging
 LOGGER = logging.getLogger('remote_sensing_flow_s_hub_png')
 LOGGER.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+LOGGER.addHandler(handler)
 load_dotenv()
 
 

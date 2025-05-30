@@ -67,16 +67,21 @@ class Image(BaseModel):
     url: str = Field(description="Image url")
 
 class UserInput(BaseModel):
-    lat: float = Field(description="Latitude of the potential site")
-    lon: float = Field(description="Longitude of the potential site")
-    radius: int = Field(description="Radius of the potential site in meters")
+    lat: float | None = Field(description="Latitude of the potential site", default=None)
+    lon: float | None = Field(description="Longitude of the potential site", default=None)
+    radius: int | None = Field(description="Radius of the potential site in meters", default=None)
+    exact: bool | None = Field(description="Whether coordinates are exact or approximate. "
+                                    "If exact AI will look only there otherwise it will look close to the coordinates.",
+                               default=None)
+    no_input: bool = Field(default=False, description="Whether coordinates are exact or approximate. "
+                                    "If exact AI will look only there otherwise it will look close to the coordinates.")
 
 class RemoteSensingState(BaseModel):
-    images: List[Image] = []
-    potential_site: PotentialSite = None
-    image_analysis: ImageAnalysis = None
-    cross_verification: str = None
-    user_input: UserInput = None
+    images: List[Image] | None = []
+    potential_site: PotentialSite | None = None
+    image_analysis: ImageAnalysis | None = None
+    cross_verification: str | None = None
+    user_input: UserInput | None = None
     prompt_log: List[str] = Field(default_factory=list, description="Prompt log")
 
 

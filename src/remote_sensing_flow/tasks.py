@@ -113,11 +113,12 @@ data_collection_task ="""For the potential new archeological site proposed, coll
     Sentinel image reference should be public urls form the tool Sentinel HUB S3 URL.
     The url should not lead to non-existing pages or 404 errors or content under paywall, login or S3 bucket not existing or access denied."""
 
-image_analysis_task = f"""For the proposed general potential site, identify potential site hotspots through vegetation anomalies and terrain patterns.
+# Be realistic - it is fine to not find anything worthy of archaeological or historical value in the images.
+image_analysis_task = f"""For the proposed general potential site, identify potential site hotspots through vegetation anomalies and terrain patterns, if any exist.
     Perform remote sensing on the attached images for archaeological anomalies.
     Use the usual methods practiced for the Amazon River region.
     Identify hotspots and pin point them with lat lon, radius and rationale. 
-    Be realistic - it is fine to not find anything worthy of archaeological or historical value in the images.
+    
     When you find something worthy give a lot more info and details.
     All images have the same coordinates and and area size can be overlayed one on top of another.
     Center of the images correspond to the proposed general potential site lat and long.
