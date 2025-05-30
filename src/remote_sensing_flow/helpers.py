@@ -1,3 +1,6 @@
+import asyncio
+
+from litellm import ContentPolicyViolationError, BadRequestError
 from pydantic import Field
 from typing import List
 from crewai import LLM
@@ -175,3 +178,19 @@ def get_markdown_image_analysis(image_analysis: ImageAnalysis) -> str:
     template = Template(template_str)
     md_content = template.render(analysis=image_analysis)
     return md_content
+
+MAX_RETRIES = 3
+async def safe_kickoff(agent, prompt: str, response_format = None) -> BaseModel:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            result = await agent.kickoff_async(prompt, response_format=response_format)
+            return result
+        except ContentPolicyViolationError as e:
+            print(f"[Attempt {attempt}] Content policy violation: {e}")
+        except BadRequestError as e:
+            if "prompt policy" in str(e).lower():
+                print(f"[Attempt {attempt}] Bad request due to prompt policy: {e}")
+            else:
+                raise  # Not related to prompt policy – re-raise
+        await asyncio.sleep(1)
+    raise RuntimeError("Failed after 3 attempts due to content policy violations.")

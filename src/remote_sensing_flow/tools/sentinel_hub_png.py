@@ -28,9 +28,10 @@ class SentinelS3PngUploader(BaseTool):
                         "signed urls creating temporarily public image urls.")
 
     async def _run(self, lat: float, lon: float, radius_in_meters: int, output_folder: str = None) -> dict[str,str]:
+        LOGGER.info(f"Requested images with: {lat} {lon} {radius_in_meters}")
         delta_deg = radius_in_meters / 111_000.0
         bbox = BBox((lon - delta_deg, lat - delta_deg, lon + delta_deg, lat + delta_deg), crs=CRS.WGS84)
-
+        LOGGER.info(f"Calculated bbox: {bbox}")
         config = SHConfig()
         config.instance_id = os.environ.get("SENTINEL_HUB_INSTANCE_ID")
         config.sh_client_id = os.environ.get("SENTINEL_HUB_CLIENT_ID")

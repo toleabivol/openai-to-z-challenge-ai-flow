@@ -8,7 +8,7 @@ import logging
 import argparse
 
 from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, model_o3, \
-    get_markdown_image_analysis, model_41
+    get_markdown_image_analysis, model_41, safe_kickoff
 from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
@@ -76,33 +76,29 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                                              "Bolivia, Columbia, Ecuador, Guyana, Peru, Suriname, Venezuela, "
                                              "and French Guiana.")
         os.makedirs(self.output_root_folder, exist_ok=True)
-        try:
-            prompt = research_task + potential_site_input_location
-            self.state.prompt_log.append(prompt)
-            researcher = Agent(
-                role="Archaeological Researcher",
-                goal="Conduct research to identify potential archeological sites. "
-                     "Analyze documents, vocal records, and legends for spatial clues. "
-                     "Do not perform any satellite imagery analysis unless already done by someone else and published.",
-                backstory="Expert in archaeological studies and historical research. Language expert.",
-                tools=[SearchTool()],
-                llm=get_llm_azure(model_41_mini),
-                verbose=True,
-            )
 
-            result = await researcher.kickoff_async(prompt,
-                                                    response_format=PotentialSite)
-        except (ContentPolicyViolationError, BadRequestError) as e:
-            LOGGER.info("Error calling AI", e)
-            result = (f"No research performed due to prompt content policy violation. "
-                      f"Sometimes it is due to the search tool returning some data. Try again.")
+        prompt = research_task + potential_site_input_location
+        self.state.prompt_log.append(prompt)
+
+        researcher = Agent(
+            role="Archaeological Researcher",
+            goal="Conduct research to identify potential archeological sites. "
+                 "Analyze documents, vocal records, and legends for spatial clues. "
+                 "Do not perform any satellite imagery analysis unless already done by someone else and published.",
+            backstory="Expert in archaeological studies and historical research. Language expert.",
+            tools=[SearchTool()],
+            llm=get_llm_azure(model_41_mini),
+            verbose=True,
+        )
+
+        try:
+            result = await safe_kickoff(researcher, prompt, PotentialSite)
+        except Exception as e:
+            LOGGER.warning("Error calling AI", e)
             exit(1)
 
-        if result.pydantic:
-            LOGGER.info("result pydantic", result.pydantic)
-            self.state.potential_site = result.pydantic
-        else:
-            LOGGER.info("result", result)
+        self.state.potential_site = result.pydantic
+        LOGGER.info(self.state.potential_site.model_dump_json(indent=2))
 
         self.output_folder = os.path.join(
             self.output_root_folder, create_safe_filename(
@@ -119,7 +115,11 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     @listen(research)
     async def collect_data(self, research_output):
 
-        radius = self.state.potential_site.radius if self.state.user_input.exact else max(self.state.potential_site.radius, 10000)
+        radius = self.state.potential_site.radius
+        if not self.state.user_input.exact:
+            radius = max(self.state.potential_site.radius, 10000)
+            radius = min(radius, 12500)
+
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
                                                     radius, self.output_folder)
         for label, url in images.items():
@@ -131,7 +131,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     def analyze_images(self, images: List[Image]):
         LOGGER.info("Analyzing data...")
 
-        llm = get_llm_azure(model_41)
+        llm = get_llm_azure(model_o4_mini)
         llm.response_format=ImageAnalysis
 
         analysis_role = "You are a Remote Sensing Analyst. Expert in multispectral satellite imagery analysis."
@@ -201,11 +201,12 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 - rationale: {self.state.potential_site.rationale};
                 - public sources: {self.state.potential_site.sources}.
                 Image Analysis: {self.state.image_analysis}"""
+
             try:
-                result = await validator.kickoff_async(validation_prompt)
-            except ContentPolicyViolationError as e:
+                result = await safe_kickoff(validator, validation_prompt)
+            except Exception as e:
                 LOGGER.info("Error in validation", e)
-                result = f"No cross verification performed due to prompt content policy violation."
+                result = f"No cross verification performed due to error calling LLM. Continuing without validation."
                 self.state.cross_verification = result
             else:
                 self.state.cross_verification = result.raw
@@ -231,7 +232,12 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         prompt = (f"{reporting_task} . Potential site: {self.state.potential_site}. "
                   f"Satellite imagery analysis: {self.state.image_analysis}. "
                   f"Cross Verification: {self.state.cross_verification}")
-        result = await reporter.kickoff_async(prompt)
+
+        try:
+            result = await safe_kickoff(reporter, prompt)
+        except Exception as e:
+            LOGGER.info("Error in reporting LLm call:", e)
+            exit(1)
 
         self.state.prompt_log.append(prompt)
 

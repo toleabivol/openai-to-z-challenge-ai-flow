@@ -122,7 +122,8 @@ image_analysis_task = f"""For the proposed general potential site, identify pote
     When you find something worthy give a lot more info and details.
     All images have the same coordinates and and area size can be overlayed one on top of another.
     Center of the images correspond to the proposed general potential site lat and long.
-    For DEM the resolution is 30m and for all the rest of the images it is 10m. use this info to calculate hotspot precise coordinates based of the distance from center of image.
+    For DEM the resolution is 30m and for all the rest of the images it is 10m. use this info to calculate hotspot 
+    precise coordinates based of the distance from center of image.
     Give each identified hotspot a score from 1 to 100 bsed on the likelihood of being new historical or archaeological findings.
     Do not include next steps or recommendations in the output."""
 
