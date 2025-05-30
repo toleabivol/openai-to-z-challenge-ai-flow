@@ -4,3 +4,4 @@
 #### A bit south from there another square https://livingatlas.arcgis.com/wayback/#active=13770&mapCenter=-66.51317%2C-9.32116%2C19&selected=10%2C11019%2C13770
 
 ### hidden square vegetation -9.00073 -67.42251 https://www.bing.com/maps?cp=-9.00073%7E-67.42251&lvl=17.2&style=h
+## Square elevated plato with "entrance" best visible in DEM https://www.bing.com/maps?cp=-3.494464%7E-55.51155&lvl=15.1&typ=s&style=h
