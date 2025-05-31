@@ -13,8 +13,9 @@ from remote_sensing_flow.tasks import research_task, validation_task, reporting_
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
 from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader
-from remote_sensing_flow.helpers import (RemoteSensingState, get_markdown_potential_site,  PotentialSite,  Image,
-                                         ImageAnalysis, create_safe_filename, UserInput)
+from remote_sensing_flow.helpers import get_markdown_potential_site, create_safe_filename
+from remote_sensing_flow.models import RemoteSensingState, PotentialSite, Image, ImageAnalysis, UserInput, \
+    ClosestKnownSite
 
 LOGGER = logging.getLogger('remote_sensing_flow')
 LOGGER.setLevel(logging.DEBUG)
@@ -119,7 +120,6 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         LOGGER.info("Checking if site is already known...")
 
         try:
-            # Read the CSV file
             known_sites_df = pd.read_csv('input_data/known_sites.csv')
 
             # Get the potential site coordinates
@@ -127,7 +127,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             potential_lon = self.state.potential_site.lon
             search_radius = self.state.potential_site.radius
 
-            # Initialize variables for the closest site
+            # Initialize variables for closest site
             closest_distance = float('inf')
             closest_site = None
 
@@ -144,53 +144,46 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                     closest_distance = distance
                     closest_site = site
 
-            # Prepare the result
-            result = {
-                "is_known_site": closest_distance <= search_radius,
-                "closest_distance": closest_distance,
-                "search_radius": search_radius
-            }
-
             if closest_site is not None:
-                result.update({
-                    "closest_site": {
-                        "name": closest_site['site_name'],
-                        "id": closest_site['site_id'],
-                        "distance": closest_distance,
-                        "coordinates": {
-                            "latitude": closest_site['latitude'],
-                            "longitude": closest_site['longitude']
-                        },
-                        "type": closest_site['site_type_description'],
-                        "classification": closest_site['classification_description']
-                    }
-                })
+                # Create ClosestKnownSite instance
+                closest_known_site = ClosestKnownSite(
+                    name=closest_site['site_name'],
+                    lat=closest_site['latitude'],
+                    lon=closest_site['longitude'],
+                    radius=search_radius,
+                    distance=[f"{closest_distance:.2f} meters"],
+                    is_within_search_radius=closest_distance <= search_radius,
+                    type=closest_site['site_type_description'],
+                    id=str(closest_site['site_id']),
+                    description=closest_site.get('nature_description', 'No description available'),
+                    site_summary=closest_site['site_summary']
+                )
 
                 # Log the results
-                LOGGER.info(f"Closest known site: {closest_site['site_name']}")
+                LOGGER.info(f"Closest known site: {closest_known_site.name}")
                 LOGGER.info(f"Distance to closest site: {closest_distance:.2f} meters")
-                LOGGER.info(f"Within search radius: {result['is_known_site']}")
-                LOGGER.info(f"Lat: {result['is_known_site']}")
-                LOGGER.info(f"Long: {result['is_known_site']}")
-                LOGGER.info(f"https://www.bing.com/maps?cp={closest_site['latitude']}%7E{closest_site['longitude']}&lvl=14.0")
+                LOGGER.info(f"Within search radius: {closest_known_site.is_within_search_radius}")
 
                 # Save the check results to a file in the output folder
                 check_results_path = os.path.join(self.output_folder, "known_sites_check.md")
                 with open(check_results_path, "w") as f:
                     f.write("# Known Sites Check Results\n\n")
                     f.write(f"## Closest Known Site\n")
-                    f.write(f"- Name: {closest_site['site_name']}\n")
-                    f.write(f"- Site ID: {closest_site['site_id']}\n")
-                    f.write(f"- Distance: {closest_distance:.2f} meters\n")
-                    f.write(f"- Type: {closest_site['site_type_description']}\n")
-                    f.write(f"- Classification: {closest_site['classification_description']}\n")
-                    f.write(f"- Coordinates: {closest_site['latitude']}, {closest_site['longitude']}\n")
+                    f.write(f"- Name: {closest_known_site.name}\n")
+                    f.write(f"- Site ID: {closest_known_site.id}\n")
+                    f.write(f"- Distance: {closest_known_site.distance[0]}\n")
+                    f.write(f"- Type: {closest_known_site.type}\n")
+                    f.write(f"- Description: {closest_known_site.description}\n")
+                    f.write(f"- Coordinates: {closest_known_site.lat}, {closest_known_site.lon}\n")
                     f.write(f"\n## Analysis\n")
-                    f.write(f"- Search radius: {search_radius} meters\n")
-                    f.write(f"- Is within search radius: {result['is_known_site']}\n")
-                    f.write(f"- Map: https://www.bing.com/maps?cp={closest_site['latitude']}%7E{closest_site['longitude']}&lvl=14.0\n")
-
-            return result
+                    f.write(f"- Search radius: {closest_known_site.radius} meters\n")
+                    f.write(f"- Is within search radius: {closest_known_site.is_within_search_radius}\n")
+                    f.write(f"\n## Maps\n")
+                    for map_url in closest_known_site.maps:
+                        f.write(f"- {map_url}\n")
+                self.state.closest_known_site = closest_known_site
+                return closest_known_site
+            return {"No known sites found"}
 
         except FileNotFoundError:
             LOGGER.warning("Known sites database file not found at input_data/known_sites.csv")
@@ -205,7 +198,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         radius = self.state.potential_site.radius
         if not self.state.user_input.exact:
             radius = max(self.state.potential_site.radius, 10000)
-            radius = min(radius, 12500)
+            radius = min(radius, 12400) # 2500 diameter is the limit
 
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
                                                     radius, self.output_folder)
@@ -270,7 +263,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         validation_file_path = os.path.join(self.output_folder, f"validation.md")
         if not self.state.image_analysis.hotspots:
             LOGGER.info("No hotspots identified. Skipping cross verification.")
-            self.state.cross_verification = "No hotspots identified. Skipping cross verification."
+            result = "No hotspots identified. Skipping cross verification."
         else:
             validator = Agent(
                 role="Validation Agent",
@@ -281,27 +274,21 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 verbose=True,
             )
             validation_prompt = f"""{validation_task}
-                Potential site: 
-                - lat: {self.state.potential_site.lat};
-                - lon: {self.state.potential_site.lon};
-                - radius: {self.state.potential_site.radius};
-                - rationale: {self.state.potential_site.rationale};
-                - public sources: {self.state.potential_site.sources}.
-                Image Analysis: {self.state.image_analysis}"""
+                {self.state.potential_site.to_prompt_str()}
+                {self.state.image_analysis.to_prompt_str()}"""
 
             try:
                 result = await safe_kickoff(validator, validation_prompt)
             except Exception as e:
                 LOGGER.info(f"Error in validation {e}")
                 result = f"No cross verification performed due to error calling LLM. Continuing without validation."
-                self.state.cross_verification = result
             else:
-                self.state.cross_verification = result.raw
+                result = self.state.cross_verification = result.raw
 
             self.state.prompt_log.append(validation_prompt)
 
         with open(validation_file_path, "a") as f:
-            f.write(self.state.cross_verification)
+            f.write(result)
 
         return {"cross_verification": self.state.cross_verification}
 
@@ -317,8 +304,11 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             verbose=True,
         )
         prompt = (f"{reporting_task} . Potential site: {self.state.potential_site}. "
-                  f"Satellite imagery analysis: {self.state.image_analysis}. "
-                  f"Cross Verification: {self.state.cross_verification}")
+                  f"Satellite imagery analysis: {self.state.image_analysis}.")
+        if self.state.cross_verification:
+            prompt += f" Cross Verification: {self.state.cross_verification}"
+        if self.state.closest_known_site:
+            prompt += f" Closest known site : {self.state.closest_known_site}. "
 
         try:
             result = await safe_kickoff(reporter, prompt)

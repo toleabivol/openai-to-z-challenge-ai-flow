@@ -77,7 +77,8 @@ research_task = f"""Conduct remote archeological research to identify potential 
 
     Archaeological sites tend to appear in
     similar places (along waterways, in higher elevations, along trade routes). Look at the known site location
-    patterns and if you see trends regionally, they may result in discoveries in similar places.
+    patterns and if you see trends regionally, they may result in discoveries in similar places. 
+    Avoid cities and towns areas. 
 
     Cross-check against published geoglyph databases and academic reports so you’re not researching already known sites, 
     but new site adjacent to already known sites is allowed.

@@ -1,14 +1,20 @@
 import asyncio
 
 from litellm import ContentPolicyViolationError, BadRequestError
-from pydantic import Field
-from typing import List
+from models import PotentialSite, ImageAnalysis
 from crewai import LLM
 from jinja2 import Template
 from pydantic import BaseModel
 import datetime
 import re
 from math import radians, sin, cos, sqrt, atan2
+import logging
+LOGGER = logging.getLogger('remote_sensing_flow_helpers')
+LOGGER.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+LOGGER.addHandler(handler)
 
 # Models. Price per 1M Tokens: Input | Cached Input | Output
 model_41 = "gpt-4.1"  # $2.00 $0.50 $8.00
@@ -33,61 +39,6 @@ def get_llm_azure(model_name: str) -> LLM:
         drop_params=True,
         verbose=True,
     )
-
-class Hotspot(BaseModel):
-    lat: float = Field(description="Precise Latitude of the hotspot")
-    lon: float = Field(description="Precise Longitude of the hotspot")
-    radius: int = Field(description="Precise Radius of the hotspot")
-    rationale: str = Field(description="Reasoning behind the selection of this hotspot. Backed up by image analysis.")
-    maps: List[str] = Field(description="List of maps urls that show the hotspot. Zoomed at the relevant level and in satellite view. Bing, google or ArcGis.")
-    score: int = Field(description="Likelihood of an architectural or historical new finding. Score from 1 to 100.")
-
-    def to_prompt_str(self, show_maps: bool = False) -> str:
-        out = f"{self.label} @ ({self.lat}, {self.lon})\n"
-        out += f"Rationale: {self.rationale}\n"
-        if show_maps:
-            out += "Maps:\n" + "\n".join(f"- {m}" for m in self.maps) + "\n"
-        out += "Sources:\n" + "\n".join(f"- {s}" for s in self.sources)
-        return out
-
-class ImageAnalysis(BaseModel):
-    analysis_raw: str = Field(description="Raw text of the image analysis output")
-    hotspots: List[Hotspot] = Field(description="List of hotspots or precis point of interest with anomalies that are relevant to the potential site")
-
-    def to_prompt_str(self, show_maps=False):
-        return self.analysis_raw + "\n\n".join(h.to_prompt_str(show_maps=show_maps) for h in self.hotspots)
-
-class PotentialSite(BaseModel):
-    name: str = Field(description="Name of the potential site")
-    lat: float = Field(description="Latitude of the potential site")
-    lon: float = Field(description="Longitude of the potential site")
-    radius: int = Field(description="Radius of the potential site in meters")
-    rationale: str = Field(description="Reasoning behind the selection of this potential site")
-    maps: List[str] = Field(description="List of maps urls that show the potential site. Bing, google or ArcGis.")
-    sources: List[str] = Field(description="List of sources that support the selection of this potential site")
-
-class Image(BaseModel):
-    label: str = Field(description="Image type")
-    url: str = Field(description="Image url")
-
-class UserInput(BaseModel):
-    lat: float | None = Field(description="Latitude of the potential site", default=None)
-    lon: float | None = Field(description="Longitude of the potential site", default=None)
-    radius: int | None = Field(description="Radius of the potential site in meters", default=None)
-    exact: bool | None = Field(description="Whether coordinates are exact or approximate. "
-                                    "If exact AI will look only there otherwise it will look close to the coordinates.",
-                               default=None)
-    no_input: bool = Field(default=False, description="Whether coordinates are exact or approximate. "
-                                    "If exact AI will look only there otherwise it will look close to the coordinates.")
-
-class RemoteSensingState(BaseModel):
-    images: List[Image] | None = []
-    potential_site: PotentialSite | None = None
-    image_analysis: ImageAnalysis | None = None
-    cross_verification: str | None = None
-    user_input: UserInput | None = None
-    prompt_log: List[str] = Field(default_factory=list, description="Prompt log")
-
 
 def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False) -> str:
     """
@@ -187,10 +138,10 @@ async def safe_kickoff(agent, prompt: str, response_format = None) -> BaseModel:
             result = await agent.kickoff_async(prompt, response_format=response_format)
             return result
         except ContentPolicyViolationError as e:
-            print(f"[Attempt {attempt}] Content policy violation: {e}")
+            LOGGER.warning(f"[Attempt {attempt}] Content policy violation: {e}")
         except BadRequestError as e:
             if "prompt policy" in str(e).lower():
-                print(f"[Attempt {attempt}] Bad request due to prompt policy: {e}")
+                LOGGER.warning(f"[Attempt {attempt}] Bad request due to prompt policy: {e}")
             else:
                 raise  # Not related to prompt policy – re-raise
         await asyncio.sleep(1)
