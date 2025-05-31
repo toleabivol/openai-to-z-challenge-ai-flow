@@ -1,14 +1,14 @@
 import json
 import os
 from typing import List
-from litellm import ContentPolicyViolationError, BadRequestError
 from crewai import Agent
 from crewai.flow.flow import Flow, listen, start
 import logging
 import argparse
+import pandas as pd
 
 from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, model_o3, \
-    get_markdown_image_analysis, model_41, safe_kickoff
+    get_markdown_image_analysis, model_41, safe_kickoff, haversine_distance
 from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
@@ -16,8 +16,6 @@ from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader
 from remote_sensing_flow.helpers import (RemoteSensingState, get_markdown_potential_site,  PotentialSite,  Image,
                                          ImageAnalysis, create_safe_filename, UserInput)
 
-# logging.basicConfig(level=LOGGER.info, format='%(asctime)s - %(levelname)s - %(message)s',
-#                     datefmt='%Y-%m-%d %H:%M:%S')
 LOGGER = logging.getLogger('remote_sensing_flow')
 LOGGER.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
@@ -113,6 +111,95 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         return {"potential_site": result.pydantic}
 
     @listen(research)
+    def check_known_sites(self, research_output):
+        """
+        Check if the potential site is already known by comparing coordinates with known sites.
+        Returns a dictionary with the check results.
+        """
+        LOGGER.info("Checking if site is already known...")
+
+        try:
+            # Read the CSV file
+            known_sites_df = pd.read_csv('input_data/known_sites.csv')
+
+            # Get the potential site coordinates
+            potential_lat = self.state.potential_site.lat
+            potential_lon = self.state.potential_site.lon
+            search_radius = self.state.potential_site.radius
+
+            # Initialize variables for the closest site
+            closest_distance = float('inf')
+            closest_site = None
+
+            # Check each known site
+            for _, site in known_sites_df.iterrows():
+                distance = haversine_distance(
+                    potential_lat,
+                    potential_lon,
+                    site['latitude'],
+                    site['longitude']
+                )
+
+                if distance < closest_distance:
+                    closest_distance = distance
+                    closest_site = site
+
+            # Prepare the result
+            result = {
+                "is_known_site": closest_distance <= search_radius,
+                "closest_distance": closest_distance,
+                "search_radius": search_radius
+            }
+
+            if closest_site is not None:
+                result.update({
+                    "closest_site": {
+                        "name": closest_site['site_name'],
+                        "id": closest_site['site_id'],
+                        "distance": closest_distance,
+                        "coordinates": {
+                            "latitude": closest_site['latitude'],
+                            "longitude": closest_site['longitude']
+                        },
+                        "type": closest_site['site_type_description'],
+                        "classification": closest_site['classification_description']
+                    }
+                })
+
+                # Log the results
+                LOGGER.info(f"Closest known site: {closest_site['site_name']}")
+                LOGGER.info(f"Distance to closest site: {closest_distance:.2f} meters")
+                LOGGER.info(f"Within search radius: {result['is_known_site']}")
+                LOGGER.info(f"Lat: {result['is_known_site']}")
+                LOGGER.info(f"Long: {result['is_known_site']}")
+                LOGGER.info(f"https://www.bing.com/maps?cp={closest_site['latitude']}%7E{closest_site['longitude']}&lvl=14.0")
+
+                # Save the check results to a file in the output folder
+                check_results_path = os.path.join(self.output_folder, "known_sites_check.md")
+                with open(check_results_path, "w") as f:
+                    f.write("# Known Sites Check Results\n\n")
+                    f.write(f"## Closest Known Site\n")
+                    f.write(f"- Name: {closest_site['site_name']}\n")
+                    f.write(f"- Site ID: {closest_site['site_id']}\n")
+                    f.write(f"- Distance: {closest_distance:.2f} meters\n")
+                    f.write(f"- Type: {closest_site['site_type_description']}\n")
+                    f.write(f"- Classification: {closest_site['classification_description']}\n")
+                    f.write(f"- Coordinates: {closest_site['latitude']}, {closest_site['longitude']}\n")
+                    f.write(f"\n## Analysis\n")
+                    f.write(f"- Search radius: {search_radius} meters\n")
+                    f.write(f"- Is within search radius: {result['is_known_site']}\n")
+                    f.write(f"- Map: https://www.bing.com/maps?cp={closest_site['latitude']}%7E{closest_site['longitude']}&lvl=14.0\n")
+
+            return result
+
+        except FileNotFoundError:
+            LOGGER.warning("Known sites database file not found at input_data/known_sites.csv")
+            return {"error": "Known sites database file not found"}
+        except Exception as e:
+            LOGGER.error(f"Error checking known sites: {str(e)}")
+            return {"error": str(e)}
+
+    @listen(check_known_sites)
     async def collect_data(self, research_output):
 
         radius = self.state.potential_site.radius
@@ -205,7 +292,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             try:
                 result = await safe_kickoff(validator, validation_prompt)
             except Exception as e:
-                LOGGER.info("Error in validation", e)
+                LOGGER.info(f"Error in validation {e}")
                 result = f"No cross verification performed due to error calling LLM. Continuing without validation."
                 self.state.cross_verification = result
             else:

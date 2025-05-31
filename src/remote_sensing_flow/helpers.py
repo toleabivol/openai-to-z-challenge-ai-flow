@@ -8,6 +8,7 @@ from jinja2 import Template
 from pydantic import BaseModel
 import datetime
 import re
+from math import radians, sin, cos, sqrt, atan2
 
 # Models. Price per 1M Tokens: Input | Cached Input | Output
 model_41 = "gpt-4.1"  # $2.00 $0.50 $8.00
@@ -194,3 +195,18 @@ async def safe_kickoff(agent, prompt: str, response_format = None) -> BaseModel:
                 raise  # Not related to prompt policy – re-raise
         await asyncio.sleep(1)
     raise RuntimeError("Failed after 3 attempts due to content policy violations.")
+
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate the distance between two points on Earth using Haversine formula"""
+    r = 6371000  # Earth's radius in meters
+
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    distance = r * c
+
+    return distance
