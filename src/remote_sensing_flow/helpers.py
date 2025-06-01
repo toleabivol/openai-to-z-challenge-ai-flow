@@ -1,7 +1,8 @@
 import asyncio
+from typing import List
 
 from litellm import ContentPolicyViolationError, BadRequestError
-from models import PotentialSite, ImageAnalysis
+from models import PotentialSite, ImageAnalysis, Hotspot
 from crewai import LLM
 from jinja2 import Template
 from pydantic import BaseModel
@@ -9,6 +10,10 @@ import datetime
 import re
 from math import radians, sin, cos, sqrt, atan2
 import logging
+import cv2
+import numpy as np
+import urllib.request
+import os
 LOGGER = logging.getLogger('remote_sensing_flow_helpers')
 LOGGER.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
@@ -162,3 +167,51 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     distance = r * c
 
     return distance
+
+def draw_hotspots_on_image(image_path: str, hotspots: List[Hotspot], output_path: str = None):
+    """
+    Draw hotspots on an image as circles with text labels.
+    
+    Args:
+        image_path: Path to the input image
+        hotspots: List of Hotspot objects with lat, lon, radius, name, and x_from_center/y_from_center attributes
+        output_path: Path where to save the output image. If None, will append '_hotspots' to original name
+    """
+    img = cv2.imread(image_path)
+    
+    if img is None:
+        LOGGER.error(f"Failed to load image from {image_path}")
+        return
+    
+    height, width = img.shape[:2]
+    
+    # For each hotspot
+    for hotspot in hotspots:
+        # Calculate pixel coordinates using x_from_center and y_from_center
+        # These values should be between -1 and 1, representing position relative to center
+        center_x = int(width/2 + hotspot.x_from_center)
+        center_y = int(height/2 + hotspot.y_from_center)
+
+        # Draw circle
+        cv2.circle(img, (center_x, center_y), hotspot.radius_in_pixels, (0, 255, 0), 5)
+        
+        # Add text label
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        text_size = cv2.getTextSize(hotspot.name, font, font_scale, 1)[0]
+        text_x = center_x - text_size[0]//2
+        text_y = center_y - hotspot.radius_in_pixels - 10
+        
+        # Draw text with background for better visibility
+        cv2.putText(img, hotspot.name, (text_x, text_y), font, font_scale, (0, 255, 0), 5)
+        cv2.putText(img, hotspot.name, (text_x, text_y), font, font_scale, (0, 0, 0), 1)
+    
+    # Generate output path if not provided
+    if output_path is None:
+        base, ext = os.path.splitext(image_path)
+        output_path = f"{base}_hotspots{ext}"
+    
+    # Save the image
+    cv2.imwrite(output_path, img)
+    LOGGER.info(f"Saved annotated image to {output_path}")
+    return output_path

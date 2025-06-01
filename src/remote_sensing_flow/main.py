@@ -9,7 +9,7 @@ import argparse
 import pandas as pd
 
 from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, model_o3, \
-    get_markdown_image_analysis, model_41, safe_kickoff, haversine_distance
+    get_markdown_image_analysis, model_41, safe_kickoff, haversine_distance, draw_hotspots_on_image
 from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
@@ -17,27 +17,6 @@ from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader
 from remote_sensing_flow.helpers import get_markdown_potential_site, create_safe_filename
 from remote_sensing_flow.models import RemoteSensingState, PotentialSite, Image, ImageAnalysis, UserInput, \
     ClosestKnownSite
-from crewai.utilities.paths import db_storage_path
-
-# Get the base storage path
-storage_path = db_storage_path()
-print(f"CrewAI storage location: {storage_path}")
-
-# List all CrewAI storage directories
-if os.path.exists(storage_path):
-    print("\nStored files and directories:")
-    for item in os.listdir(storage_path):
-        item_path = os.path.join(storage_path, item)
-        if os.path.isdir(item_path):
-            print(f"📁 {item}/")
-            # Show ChromaDB collections
-            if os.path.exists(item_path):
-                for subitem in os.listdir(item_path):
-                    print(f"   └── {subitem}")
-        else:
-            print(f"📄 {item}")
-else:
-    print("No CrewAI storage directory found yet.")
 
 LOGGER = logging.getLogger('remote_sensing_flow')
 LOGGER.setLevel(logging.DEBUG)
@@ -86,7 +65,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
     @listen(user_input)
     async def research(self):
-        LOGGER.info("\n=== Start Research ===\n")
+        LOGGER.info("=== Start Research ===")
         if self.state.user_input and not self.state.user_input.no_input:
             LOGGER.info(f'Adding user input proposed coordinates to the prompt {self.state.user_input}')
             proximity = "exactly at" if self.state.user_input.exact else "close to"
@@ -230,8 +209,8 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
                                                     radius, self.output_folder)
-        for label, url in images.items():
-            self.state.images.append(Image(label=label,url=url))
+        for label, (url, filename) in images.items():
+            self.state.images.append(Image(label=label,url=url, filename=filename))
 
         return {"images": images}
 
@@ -239,7 +218,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     def analyze_images(self, images: List[Image]):
         LOGGER.info("Analyzing data...")
 
-        llm = get_llm_azure(model_o4_mini, 0.2)
+        llm = get_llm_azure(model_41_mini, 0.1)
         llm.response_format=ImageAnalysis
 
         analysis_role = "You are a Remote Sensing Analyst. Expert in multispectral satellite imagery analysis."
@@ -282,6 +261,14 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         image_analysis_file_path = os.path.join(self.output_folder, f"image_analysis.md")
         with open(image_analysis_file_path, "w") as f:
             f.write(get_markdown_image_analysis(self.state.image_analysis))
+
+        # Draw hotspots on each image
+        LOGGER.info(f"Drawing hotspots on images")
+        for image in self.state.images:
+            draw_hotspots_on_image(
+                os.path.join(self.output_folder, image.filename),
+                self.state.image_analysis.hotspots
+            )
 
         return {'image_analysis': response}
 

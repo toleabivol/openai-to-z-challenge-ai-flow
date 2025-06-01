@@ -120,10 +120,13 @@ class Hotspot(Location):
     rationale: str = Field(description="Reasoning behind the selection of this hotspot. Backed up by image analysis.")
     score: int = Field(description="Likelihood of an architectural or historical new finding. Score from 1 to 100.")
     name: str = Field(description="Name of the hotspot")
-    sources: str = Field(description="Sources supporting the rationale")
+    sources: List[str] = Field(description="Sources supporting the rationale")
+    x_from_center: int = Field(description="X coordinate of the hotspot from the center of the image")
+    y_from_center: int = Field(description="Y coordinate of the hotspot from the center of the image")
+    radius_in_pixels: int = Field(description="Radius of hotspot in pixels")
 
     def to_prompt_str(self) -> str:
-        out = f"Hotspot {self.name} @ ({self.lat}, {self.lon})\n"
+        out = f"Hotspot {self.name} @ ({self.lat}, {self.lon}) with radius {self.radius}\n"
         out += f"Score: {self.score}\n"
         out += f"Rationale: {self.rationale}\n"
         out += "Sources:\n" + "\n".join(f"- {s}" for s in self.sources)
@@ -162,6 +165,7 @@ class ClosestKnownSite(Site):
 class Image(BaseModel):
     label: str = Field(description="Image type")
     url: str = Field(description="Image url")
+    filename: str = Field(description="Image local filename")
 
 class UserInput(BaseModel):
     lat: float | None = Field(description="Latitude of the potential site", default=None)

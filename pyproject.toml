@@ -11,6 +11,8 @@ dependencies = [
     "duckduckgo-search>=8.0.2",
     "hatchling>=1.27.0",
     "sentinelhub>=3.11.1",
+    "opencv-python>=4.9.0",
+    "numpy>=1.26.0",
 ]
 
 [project.scripts]

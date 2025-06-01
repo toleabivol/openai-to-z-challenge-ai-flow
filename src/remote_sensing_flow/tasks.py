@@ -87,10 +87,12 @@ research_task = f"""Conduct remote archeological research to identify potential 
     
     Expected output: 
     One potential new archeological site based on the research with highest probability 
-    of new findings. The output should be a short name, a list of coordinates 
-    (latitude, longitude, radius) in WGS84 format followed by a short rationale, followed by direct 
-    links to the google, bing, sentinel hub https://apps.sentinel-hub.com/eo-browser/?zoom={{zoom}}&lat={{lat}}&lng={{lang}} and livingatlas https://livingatlas.arcgis.com/wayback/#active=34007&mapCenter={{long}}%2C{{lat}}%2C14 maps with satellite layer and proper zoom level, 
-    followed by urls to public resources to back the rationale. Must have at least one historical map or text."""
+    of new findings. Urls to public resources to back the rationale. Must have at least one historical map or text. 
+    """
+    # """The output should be a short name, a list of coordinates
+    # (latitude, longitude, radius) in WGS84 format followed by a short rationale, followed by direct
+    # links to the google, bing, sentinel hub https://apps.sentinel-hub.com/eo-browser/?zoom={{zoom}}&lat={{lat}}&lng={{lang}} and livingatlas https://livingatlas.arcgis.com/wayback/#active=34007&mapCenter={{long}}%2C{{lat}}%2C14 maps with satellite layer and proper zoom level.
+    # """
 
 data_collection_task ="""For the potential new archeological site proposed, collect following satellite imagery : 
     - ESA Sentinel-2 imagery (10m resolution); 
@@ -123,8 +125,9 @@ image_analysis_task = f"""For the proposed general potential site, identify pote
     When you find something worthy give a lot more info and details.
     All images have the same coordinates and and area size can be overlayed one on top of another.
     Center of the images correspond to the proposed general potential site lat and long.
-    For DEM the resolution is 30m and for all the rest of the images it is 10m. use this info to calculate hotspot 
-    precise coordinates based of the distance from center of image.
+    For DEM the resolution is 30m and for all the rest of the images it is 10m. Use this info to calculate hotspot 
+    precise coordinates based of the distance from center of image. 
+    Give also hotspot coordinates as X,Y from center of image and radius in pixels.
     Give each identified hotspot a score from 1 to 100 bsed on the likelihood of being new historical or archaeological findings.
     Do not include next steps or recommendations in the output."""
 

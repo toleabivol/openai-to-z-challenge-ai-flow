@@ -27,7 +27,7 @@ class SentinelS3PngUploader(BaseTool):
     description: str = ("Fetches Sentinel-2, Landsat-8-9 and Copernicus DEM data and uploads PNGs to S3 and returns S3 "
                         "signed urls creating temporarily public image urls.")
 
-    async def _run(self, lat: float, lon: float, radius_in_meters: int, output_folder: str = None) -> dict[str,str]:
+    async def _run(self, lat: float, lon: float, radius_in_meters: int, output_folder: str = None) -> dict[str,tuple]:
         LOGGER.info(f"Requested images with: {lat} {lon} {radius_in_meters}")
         delta_deg = radius_in_meters / 111_000.0
         bbox = BBox((lon - delta_deg, lat - delta_deg, lon + delta_deg, lat + delta_deg), crs=CRS.WGS84)
@@ -45,6 +45,7 @@ class SentinelS3PngUploader(BaseTool):
             #  so it is recommended to set the output format in your evalscript to FLOAT32.
             # But we cannot do that since FLOAT32 does not work with PNG but only with TIFF
             "copernicus_dem": """
+                //VERSION=3
                 function setup() {
                   return {
                     input: ["DEM"],
@@ -56,6 +57,7 @@ class SentinelS3PngUploader(BaseTool):
                 }
             """,
             "mapzen_dem": """
+                //VERSION=3
                 function setup() {
                   return {
                     input: ["DEM"],
@@ -89,7 +91,10 @@ class SentinelS3PngUploader(BaseTool):
                 function setup() {
                     return {
                         input: ["B05", "B04", "B03"],
-                        output: { bands: 3 }
+                        output: { 
+                            bands: 3,
+                            sampleType: "AUTO"
+                        }
                     };
                 }
                 
@@ -122,7 +127,8 @@ class SentinelS3PngUploader(BaseTool):
                             bands: ["B08", "B04", "B03"]
                         }],
                         output: {
-                            bands: 3
+                            bands: 3,
+                            sampleType: "AUTO"
                         }
                     };
                 }
@@ -133,7 +139,13 @@ class SentinelS3PngUploader(BaseTool):
             "s2_l2a_B08_nir": """
                 //VERSION=3
                 function setup() {
-                    return { input: ["B08"], output: { bands: 1 } };
+                    return { 
+                        input: ["B08"], 
+                        output: { 
+                            bands: 1,
+                            sampleType: "AUTO" 
+                        }
+                    };
                 }
                 function evaluatePixel(s) {
                     return [s.B08];
@@ -142,31 +154,41 @@ class SentinelS3PngUploader(BaseTool):
             "s2_l2a_NDVI": """
                 //VERSION=3
                 function setup() {
-                    return { input: ["B04", "B08"], output: { bands: 1 } };
+                    return { 
+                        input: ["B04", "B08"], 
+                        output: { 
+                            bands: 1,
+                            sampleType: "UINT8" 
+                        }
+                    };
                 }
                 function evaluatePixel(s) {
-                    let ndvi = (s.B08 - s.B04) / (s.B08 + s.B04);
-                    return [ndvi];
+                  let ndvi = (s.B08 - s.B04) / (s.B08 + s.B04);
+                  // Remap: [-1,1] → [0,1], then [0,1] → [0,255].
+                  let scaled = Math.round(((ndvi + 1.0) / 2.0) * 255.0);
+                  return [scaled];
                 }
             """,
             "s2_l2a_NDWI": """
                 //VERSION=3
                 function setup() {
-                    return { input: ["B03", "B08"], output: { bands: 1 } };
+                    return { input: ["B03", "B08"], output: { bands: 1, sampleType: "UINT8"  } };
                 }
                 function evaluatePixel(s) {
                     let ndwi = (s.B03 - s.B08) / (s.B03 + s.B08);
-                    return [ndwi];
+                    let scaled = Math.round(((ndwi + 1.0) / 2.0) * 255.0);
+                    return [scaled];
                 }
             """,
             "s2_l2a_NBR": """
                 //VERSION=3
                 function setup() {
-                    return { input: ["B08", "B12"], output: { bands: 1 } };
+                    return { input: ["B08", "B12"], output: { bands: 1, sampleType: "UINT8" } };
                 }
                 function evaluatePixel(s) {
                     let nbr = (s.B08 - s.B12) / (s.B08 + s.B12);
-                    return [nbr];
+                    let scaled = Math.round(((nbr + 1.0) / 2.0) * 255.0);
+                    return [scaled];
                 }
             """
         }
@@ -177,7 +199,7 @@ class SentinelS3PngUploader(BaseTool):
             tasks.append(self.process_image(label, lat, lon, script, config, bbox, output_folder))
         sentinelhub_results = await gather(*tasks)
 
-        result_urls = {label: url for label, url in sentinelhub_results}
+        result_urls = {label: (url, filename) for label, url, filename in sentinelhub_results}
 
         return result_urls
 
@@ -254,7 +276,7 @@ class SentinelS3PngUploader(BaseTool):
         if output_folder:
             self.copy_and_rename(png_path, output_folder, filename)
         shutil.rmtree(tmp_output_folder)
-        return label, s3_url
+        return label, s3_url, filename
 
     def copy_and_rename(self, src_path: str, dest_path: str, new_name: str):
         # Copy the file
