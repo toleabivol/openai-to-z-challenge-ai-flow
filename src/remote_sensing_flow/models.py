@@ -156,8 +156,8 @@ class ClosestKnownSite(Site):
     is_within_search_radius: bool = Field(description="Is distance within search radius of PotentialSite.")
     type: str = Field(description="Type of the Site.")
     id: str = Field(description="Site ID.")
-    description: str = Field(description="Site Description.")
-    site_summary: str = Field(description="Site Summary.")
+    description: str | None = Field(description="Site Description.")
+    site_summary: str | None = Field(description="Site Summary.")
 
 class Image(BaseModel):
     label: str = Field(description="Image type")

@@ -31,13 +31,14 @@ llm_azure_api_version = "2025-04-01-preview"
 
 
 # llm factory function
-def get_llm_azure(model_name: str) -> LLM:
+def get_llm_azure(model_name: str, temperature: float = None) -> LLM:
     return LLM(
         model=f"{llm_provider_azure}/{model_name}",
         api_version=llm_azure_api_version,  # only use with azure
         additional_drop_params=["stop"],
         drop_params=True,
         verbose=True,
+        temperature=temperature
     )
 
 def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False) -> str:

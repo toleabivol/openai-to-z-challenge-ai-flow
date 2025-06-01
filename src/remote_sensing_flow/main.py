@@ -3,6 +3,7 @@ import os
 from typing import List
 from crewai import Agent
 from crewai.flow.flow import Flow, listen, start
+from crewai.flow.persistence import persist
 import logging
 import argparse
 import pandas as pd
@@ -16,6 +17,27 @@ from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader
 from remote_sensing_flow.helpers import get_markdown_potential_site, create_safe_filename
 from remote_sensing_flow.models import RemoteSensingState, PotentialSite, Image, ImageAnalysis, UserInput, \
     ClosestKnownSite
+from crewai.utilities.paths import db_storage_path
+
+# Get the base storage path
+storage_path = db_storage_path()
+print(f"CrewAI storage location: {storage_path}")
+
+# List all CrewAI storage directories
+if os.path.exists(storage_path):
+    print("\nStored files and directories:")
+    for item in os.listdir(storage_path):
+        item_path = os.path.join(storage_path, item)
+        if os.path.isdir(item_path):
+            print(f"📁 {item}/")
+            # Show ChromaDB collections
+            if os.path.exists(item_path):
+                for subitem in os.listdir(item_path):
+                    print(f"   └── {subitem}")
+        else:
+            print(f"📄 {item}")
+else:
+    print("No CrewAI storage directory found yet.")
 
 LOGGER = logging.getLogger('remote_sensing_flow')
 LOGGER.setLevel(logging.DEBUG)
@@ -24,6 +46,7 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 handler.setFormatter(formatter)
 LOGGER.addHandler(handler)
 
+@persist(verbose=True)
 class RemoteSensingFlow(Flow[RemoteSensingState]):
 
     output_root_folder: str = 'output'
@@ -31,8 +54,8 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
     @start()
     async def user_input(self):
+        LOGGER.info("\n=== Start User Input ===\n")
         if not self.state.user_input:
-            LOGGER.info("\n=== Start User Input ===\n")
             # Ask for user input ask if they want to input lat long radius coordinates or if they let the AI search
             # for a potential site.
             while True:
@@ -56,6 +79,8 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             response = input("Coordinates are exact? (y/n):").lower().strip()
             if response in ['yes', 'y', '1']:
                 self.state.user_input.exact = True
+        else:
+            LOGGER.info(f'Using user input from from script args or --ni (no input) arg provided.')
 
         return {"user_input": self.state.user_input}
 
@@ -86,8 +111,10 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                  "Do not perform any satellite imagery analysis unless already done by someone else and published.",
             backstory="Expert in archaeological studies and historical research. Language expert.",
             tools=[SearchTool()],
-            llm=get_llm_azure(model_41_mini),
+            llm=get_llm_azure(model_41_mini, 0.7),
             verbose=True,
+            reasoning=True,
+            max_iter=5,
         )
 
         try:
@@ -145,6 +172,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                     closest_site = site
 
             if closest_site is not None:
+                LOGGER.info(f"Closest known site found: {closest_site}")
                 # Create ClosestKnownSite instance
                 closest_known_site = ClosestKnownSite(
                     name=closest_site['site_name'],
@@ -211,7 +239,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     def analyze_images(self, images: List[Image]):
         LOGGER.info("Analyzing data...")
 
-        llm = get_llm_azure(model_o4_mini)
+        llm = get_llm_azure(model_o4_mini, 0.2)
         llm.response_format=ImageAnalysis
 
         analysis_role = "You are a Remote Sensing Analyst. Expert in multispectral satellite imagery analysis."
@@ -269,7 +297,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 role="Validation Agent",
                 goal="Confirm coordinates through at least two independent methods",
                 backstory="Geospatial data integrity expert",
-                llm=get_llm_azure(model_o4_mini),
+                llm=get_llm_azure(model_o4_mini, 0.1),
                 tools=[SearchTool()],
                 verbose=True,
             )
@@ -300,7 +328,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             goal="Compile findings into verified reports",
             backstory="Senior researcher with publication experience",
             tools=[SearchTool()],
-            llm=get_llm_azure(model_o4_mini),  # TODO use model o3 or o4 recommended, keeping mini for testing costs reduction
+            llm=get_llm_azure(model_o4_mini, 0.4),  # TODO use model o3 or o4 recommended, keeping mini for testing costs reduction
             verbose=True,
         )
         prompt = (f"{reporting_task} . Potential site: {self.state.potential_site}. "
@@ -340,8 +368,10 @@ def parse_args():
 def kickoff():
     """Run the guide creator flow"""
     args = parse_args()
+    # flow_id = "remote_sensing_2025_06_01_001"
     if args and args.lat and args.lon and args.radius:
         flow_result = RemoteSensingFlow().kickoff(inputs={
+            # "id": flow_id,
             "user_input": {
                 "lat": args.lat,
                 "lon": args.lon,
@@ -350,12 +380,17 @@ def kickoff():
             }})
     elif args.ni:
         flow_result = RemoteSensingFlow().kickoff(inputs={
+            # "id": flow_id,
             "user_input": {
                 "no_input": True
             }
         })
     else:
-        flow_result = RemoteSensingFlow().kickoff()
+        flow_result = RemoteSensingFlow().kickoff(
+            # inputs={
+            #     "id": flow_id,
+            # }
+        )
     LOGGER.info(flow_result)
     LOGGER.info("\n=== Flow Complete ===")
 

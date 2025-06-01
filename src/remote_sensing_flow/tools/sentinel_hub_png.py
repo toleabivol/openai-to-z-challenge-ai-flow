@@ -236,6 +236,9 @@ class SentinelS3PngUploader(BaseTool):
 
         if not png_path:
             raise FileNotFoundError(f"PNG file not found in {tmp_output_folder} for {label}.")
+
+        #TODO optimize image losslessly with pngcrush ? should not influence image analysis later
+
         LOGGER.info(f'Uploading to s3 {label}')
         filename = create_safe_filename(f"{label}_{lat}_{lon}_{date_from}_{date_to}", '.png', True)
         key = f"sentinel_hub/{filename}"
