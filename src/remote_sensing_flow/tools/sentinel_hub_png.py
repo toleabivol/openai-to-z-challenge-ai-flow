@@ -16,7 +16,7 @@ import logging
 LOGGER = logging.getLogger('remote_sensing_flow_s_hub_png')
 LOGGER.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter("%(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 LOGGER.addHandler(handler)
 load_dotenv()
@@ -27,11 +27,10 @@ class SentinelS3PngUploader(BaseTool):
     description: str = ("Fetches Sentinel-2, Landsat-8-9 and Copernicus DEM data and uploads PNGs to S3 and returns S3 "
                         "signed urls creating temporarily public image urls.")
 
-    async def _run(self, lat: float, lon: float, radius_in_meters: int, output_folder: str = None) -> dict[str,tuple]:
-        LOGGER.info(f"Requested images with: {lat} {lon} {radius_in_meters}")
-        delta_deg = radius_in_meters / 111_000.0
-        bbox = BBox((lon - delta_deg, lat - delta_deg, lon + delta_deg, lat + delta_deg), crs=CRS.WGS84)
-        LOGGER.info(f"Calculated bbox: {bbox}")
+    async def _run(self, lat: float, lon: float, bbox: tuple[float,float,float,float],
+                   output_folder: str = None) -> dict[str,tuple]:
+        LOGGER.info(f"Requested images with: {lat} {lon} {bbox}")
+        bbox = BBox(bbox , CRS.WGS84)
         config = SHConfig()
         config.instance_id = os.environ.get("SENTINEL_HUB_INSTANCE_ID")
         config.sh_client_id = os.environ.get("SENTINEL_HUB_CLIENT_ID")
@@ -199,7 +198,7 @@ class SentinelS3PngUploader(BaseTool):
             tasks.append(self.process_image(label, lat, lon, script, config, bbox, output_folder))
         sentinelhub_results = await gather(*tasks)
 
-        result_urls = {label: (url, filename) for label, url, filename in sentinelhub_results}
+        result_urls = {label: (url, filename, size) for label, url, filename, size in sentinelhub_results}
 
         return result_urls
 
@@ -276,7 +275,7 @@ class SentinelS3PngUploader(BaseTool):
         if output_folder:
             self.copy_and_rename(png_path, output_folder, filename)
         shutil.rmtree(tmp_output_folder)
-        return label, s3_url, filename
+        return label, s3_url, filename, size
 
     def copy_and_rename(self, src_path: str, dest_path: str, new_name: str):
         # Copy the file
@@ -289,5 +288,6 @@ class SentinelS3PngUploader(BaseTool):
 
 if __name__ == "__main__":
     tool = SentinelS3PngUploader()
-    result = tool._run(lat=-7.95, lon=-67.3, radius_in_meters=20000)
+    b_box = (-67.4, -7.96, -67.2, -7.94)
+    result = tool._run(lat=-7.95, lon=-67.3, bbox=b_box)
     LOGGER.info(result)

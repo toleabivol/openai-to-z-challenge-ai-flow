@@ -78,7 +78,8 @@ research_task = f"""Conduct remote archeological research to identify potential 
     Archaeological sites tend to appear in
     similar places (along waterways, in higher elevations, along trade routes). Look at the known site location
     patterns and if you see trends regionally, they may result in discoveries in similar places. 
-    Avoid cities and towns areas. 
+    Avoid high populated regions like cities and towns. Do not pick locations in the 20km radius of Santarém city center.
+    Do not select locations on deep waters.
 
     Cross-check against published geoglyph databases and academic reports so you’re not researching already known sites, 
     but new site adjacent to already known sites is allowed.
@@ -87,7 +88,7 @@ research_task = f"""Conduct remote archeological research to identify potential 
     
     Expected output: 
     One potential new archeological site based on the research with highest probability 
-    of new findings. Urls to public resources to back the rationale. Must have at least one historical map or text. 
+    of new findings. Urls to public resources to back the rationale. Must have at least one historical map or text. Use WGS84 for coordinates.
     """
     # """The output should be a short name, a list of coordinates
     # (latitude, longitude, radius) in WGS84 format followed by a short rationale, followed by direct
@@ -117,19 +118,37 @@ data_collection_task ="""For the potential new archeological site proposed, coll
     The url should not lead to non-existing pages or 404 errors or content under paywall, login or S3 bucket not existing or access denied."""
 
 # Be realistic - it is fine to not find anything worthy of archaeological or historical value in the images.
-image_analysis_task = f"""For the proposed general potential site, identify potential site hotspots through vegetation anomalies and terrain patterns, if any exist.
+image_analysis_task = f"""List all the images you received and state their: label, original size, received by you size in pixels.
     Perform remote sensing on the attached images for archaeological anomalies.
-    Use the usual methods practiced for the Amazon River region.
-    Identify hotspots and pin point them with lat lon, radius and rationale. 
+    Analyze these layers together and propose any new potential archaeological sites (e.g., mounds, canals, earthworks, or other human-made anomalies) that appear in this area.
+    Identify hotspots and pin point them with lat lon, radius and x,y px from top left corner of the original image. Add a rationale. 
+    Explain which spectral/DEM cues led you to flag it (e.g., subtle mound shape in DEM + vegetation anomaly in NDVI, linear discoloration in false-color, moisture signature in NDWI, etc.) 
+    
+    Additionally to the identified archaeological hotspots: add one exactly at the bottom right corner of the image for debugging.
     
     When you find something worthy give a lot more info and details.
-    All images have the same coordinates and and area size can be overlayed one on top of another.
+    All images have the same coordinates and and area size and can be overlayed one on top of another.
+    All original images have a resolution of 10 meters per pixel.
     Center of the images correspond to the proposed general potential site lat and long.
-    For DEM the resolution is 30m and for all the rest of the images it is 10m. Use this info to calculate hotspot 
-    precise coordinates based of the distance from center of image. 
-    Give also hotspot coordinates as X,Y from center of image and radius in pixels.
-    Give each identified hotspot a score from 1 to 100 bsed on the likelihood of being new historical or archaeological findings.
+    Give each identified hotspot a score from 1 to 100 based on the likelihood of being new historical or archaeological findings.
+    Use WGS84 for coordinates.
     Do not include next steps or recommendations in the output."""
+# """
+# Corners of the images correspond to the proposed general potential site bbox.
+# """
+# """
+#     Additionally to the identified archaeological hotspots: add
+#     one exactly with the center on the bottom left corner of the image.
+#     Then one exactly with the center on the top right corner of the image.
+# """
+# """
+#     For DEM the resolution is 30m and for all the rest of the images it is 10m. Use this info to calculate hotspot
+#     precise coordinates based of the distance from center of image.
+# """
+# """
+# Additionally to the identified archaeological hotspots:
+#     add one hotspot right in the middle of the image and 4 on each of the corners of the image so that the circle drawn from center of hotspot with the radius is tangent to the edges of the image and is fully inside the image.
+# """
 
 validation_task = """Verify coordinates using:
     - Provided Satellite image analysis;
@@ -140,6 +159,7 @@ validation_task = """Verify coordinates using:
     Be realistic - if you do not see potential hotspots to have real archaeological or historical that is fine. You can reevaluate the hotspots' score as well.
     Replace prohibited words like swastika or any other prohibited word with the appropriate word or description that is
     allowed, like 'geoglyph', in the search, search output, prompts and in the output
+    Use WGS84 for coordinates.
     Do not include next steps or recommendations in the output. """
 
 reporting_task = """Produce final report with:

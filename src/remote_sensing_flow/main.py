@@ -7,9 +7,11 @@ from crewai.flow.persistence import persist
 import logging
 import argparse
 import pandas as pd
+from openai import OpenAI
 
 from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, model_o3, \
-    get_markdown_image_analysis, model_41, safe_kickoff, haversine_distance, draw_hotspots_on_image
+    get_markdown_image_analysis, model_41, safe_kickoff, haversine_distance, draw_hotspots_on_image, \
+    get_markdown_closest_known_site
 from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
@@ -21,7 +23,7 @@ from remote_sensing_flow.models import RemoteSensingState, PotentialSite, Image,
 LOGGER = logging.getLogger('remote_sensing_flow')
 LOGGER.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter("%(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 LOGGER.addHandler(handler)
 
@@ -89,11 +91,13 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                  "Analyze documents, vocal records, and legends for spatial clues. "
                  "Do not perform any satellite imagery analysis unless already done by someone else and published.",
             backstory="Expert in archaeological studies and historical research. Language expert.",
-            tools=[SearchTool()],
-            llm=get_llm_azure(model_41_mini, 0.7),
+            tools=[
+                # SearchTool()
+            ],
+            llm=get_llm_azure(model_41, 0.3),
             verbose=True,
-            reasoning=True,
-            max_iter=5,
+            # reasoning=True,
+            # max_iter=5,
         )
 
         try:
@@ -110,6 +114,10 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 f"{self.state.potential_site.lat}_{self.state.potential_site.lon}_{self.state.potential_site.name}",
                 timestamp=True))
         os.makedirs(self.output_folder)
+
+        report_file_path = os.path.join(self.output_folder, "prompt_log.md")
+        with open(report_file_path, "w") as f:
+            f.write(prompt)
 
         site_file_path = os.path.join(self.output_folder, "site.md")
         with open(site_file_path, "w") as f:
@@ -163,7 +171,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                     type=closest_site['site_type_description'],
                     id=str(closest_site['site_id']),
                     description=closest_site.get('nature_description', 'No description available'),
-                    site_summary=closest_site['site_summary']
+                    site_summary=closest_site['site_summary'] if pd.notna(closest_site['site_summary']) else 'No summary available'
                 )
 
                 # Log the results
@@ -174,20 +182,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 # Save the check results to a file in the output folder
                 check_results_path = os.path.join(self.output_folder, "known_sites_check.md")
                 with open(check_results_path, "w") as f:
-                    f.write("# Known Sites Check Results\n\n")
-                    f.write(f"## Closest Known Site\n")
-                    f.write(f"- Name: {closest_known_site.name}\n")
-                    f.write(f"- Site ID: {closest_known_site.id}\n")
-                    f.write(f"- Distance: {closest_known_site.distance[0]}\n")
-                    f.write(f"- Type: {closest_known_site.type}\n")
-                    f.write(f"- Description: {closest_known_site.description}\n")
-                    f.write(f"- Coordinates: {closest_known_site.lat}, {closest_known_site.lon}\n")
-                    f.write(f"\n## Analysis\n")
-                    f.write(f"- Search radius: {closest_known_site.radius} meters\n")
-                    f.write(f"- Is within search radius: {closest_known_site.is_within_search_radius}\n")
-                    f.write(f"\n## Maps\n")
-                    for map_url in closest_known_site.maps:
-                        f.write(f"- {map_url}\n")
+                    f.write(get_markdown_closest_known_site(closest_known_site))
                 self.state.closest_known_site = closest_known_site
                 return closest_known_site
             return {"No known sites found"}
@@ -202,43 +197,50 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     @listen(check_known_sites)
     async def collect_data(self, research_output):
 
-        radius = self.state.potential_site.radius
+        bbox = self.state.potential_site.bbox.as_tuple()
         if not self.state.user_input.exact:
-            radius = max(self.state.potential_site.radius, 10000)
-            radius = min(radius, 12400) # 2500 diameter is the limit
+            bbox = self.state.potential_site.bbox_images.as_tuple()
 
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
-                                                    radius, self.output_folder)
-        for label, (url, filename) in images.items():
-            self.state.images.append(Image(label=label,url=url, filename=filename))
+                                                    bbox, self.output_folder)
+        for label, (url, filename, size) in images.items():
+            self.state.images.append(Image(label=label,url=url, filename=filename, size=size))
 
-        return {"images": images}
+        return {"images": self.state.images}
 
     @listen(collect_data)
     def analyze_images(self, images: List[Image]):
         LOGGER.info("Analyzing data...")
 
-        llm = get_llm_azure(model_41_mini, 0.1)
+        llm = get_llm_azure(model_41_mini, 0)
         llm.response_format=ImageAnalysis
 
-        analysis_role = "You are a Remote Sensing Analyst. Expert in multispectral satellite imagery analysis."
-        content = [{"type": "text", "text": f"""Proposed General Potential site: 
+        analysis_role = ("You are a remote sensing specialist with experience in Amazon‐basin archaeology. "
+                         "Expert in multispectral satellite imagery analysis.")
+        content = [{"type": "input_text", "text": f"""Proposed General Potential site: 
             - lat: {self.state.potential_site.lat};
             - lon: {self.state.potential_site.lon};
-            - radius: {self.state.potential_site.radius}."""},
-            {"type": "text", "text": image_analysis_task}
-        ]
+            - radius: {self.state.potential_site.radius};
+            - Bounding Box of the proposed site (min_lon, min_lat, max_lon, max_lat) : {self.state.potential_site.bbox} .
+            {image_analysis_task}
+            All original images are the same size: width {self.state.images[0].size[0]} px, 
+            height {self.state.images[0].size[1]} px. You will get downscaled images. 
+            Bounding Box of the images (min_lon, min_lat, max_lon, max_lat) : {self.state.potential_site.bbox_images} .
+            Calculate the hotspot coordinates that are in x,y pixel coordinates back to the images' original size 
+            so that they are in the correct place when set on the original image.
+            """
+        }]
         for image in self.state.images:
             # Make it clear to the LLM which image it is.
             # NDVI, true color, DEM etc.
             # as from the url sometimes it does not assume correctly
             content.append(
-                {"type": "text", "text": f"Image {image.label}:"}
+                {"type": "input_text", "text": f"Image {image.label}:"}
             )
             content.append(
                 {
-                    "type": "image_url",
-                    "image_url": {"url": image.url},
+                    "type": "input_image",
+                    "image_url": image.url,
                     "detail": "high"  # want the model to have a better understanding of the image.
                 }
             )
@@ -251,26 +253,31 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         ]
 
         self.state.prompt_log.append(json.dumps(messages))
+        report_file_path = os.path.join(self.output_folder, "prompt_log.md")
+        with open(report_file_path, "a") as f:
+            f.write("\n\n==========\n\n" + json.dumps(messages))
 
-        response = llm.call(messages=messages)
+        # response = llm.call(messages=messages)
 
-        LOGGER.info(response)
+        client = OpenAI()
+        response = client.responses.parse(
+            model="gpt-4.1-mini-2025-04-14",
+            input=messages,
+            text_format=ImageAnalysis,
+            temperature=0
+        )
 
-        self.state.image_analysis = ImageAnalysis.model_validate_json(response)
+        LOGGER.info(response.output_parsed)
+        LOGGER.info(type(response))
+
+        # self.state.image_analysis = ImageAnalysis.model_validate_json(response)
+        self.state.image_analysis = response.output_parsed
 
         image_analysis_file_path = os.path.join(self.output_folder, f"image_analysis.md")
         with open(image_analysis_file_path, "w") as f:
             f.write(get_markdown_image_analysis(self.state.image_analysis))
 
-        # Draw hotspots on each image
-        LOGGER.info(f"Drawing hotspots on images")
-        for image in self.state.images:
-            draw_hotspots_on_image(
-                os.path.join(self.output_folder, image.filename),
-                self.state.image_analysis.hotspots
-            )
-
-        return {'image_analysis': response}
+        return {'image_analysis': response.output_parsed}
 
     @listen(analyze_images)
     async def cross_verify(self, analysis):
@@ -279,14 +286,26 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         if not self.state.image_analysis.hotspots:
             LOGGER.info("No hotspots identified. Skipping cross verification.")
             result = "No hotspots identified. Skipping cross verification."
+            exit(0)
         else:
+            # Draw hotspots on each image
+            LOGGER.info(f"Drawing hotspots on images")
+            for image in self.state.images:
+                draw_hotspots_on_image(
+                    os.path.join(self.output_folder, image.filename),
+                    self.state.image_analysis.hotspots
+                )
+
             validator = Agent(
                 role="Validation Agent",
                 goal="Confirm coordinates through at least two independent methods",
                 backstory="Geospatial data integrity expert",
                 llm=get_llm_azure(model_o4_mini, 0.1),
-                tools=[SearchTool()],
+                tools=[
+                    # SearchTool()
+                ],
                 verbose=True,
+                # reasoning=True
             )
             validation_prompt = f"""{validation_task}
                 {self.state.potential_site.to_prompt_str()}
@@ -301,6 +320,9 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 result = self.state.cross_verification = result.raw
 
             self.state.prompt_log.append(validation_prompt)
+            report_file_path = os.path.join(self.output_folder, "prompt_log.md")
+            with open(report_file_path, "a") as f:
+                f.write("\n\n==========\n\n" + validation_prompt)
 
         with open(validation_file_path, "a") as f:
             f.write(result)
@@ -339,7 +361,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
         report_file_path = os.path.join(self.output_folder, "prompt_log.md")
         with open(report_file_path, "w") as f:
-            f.write("\n\n==========\n\n".join(self.state.prompt_log))
+            f.write("\n\n==========\n\n" + prompt)
 
         return result
 

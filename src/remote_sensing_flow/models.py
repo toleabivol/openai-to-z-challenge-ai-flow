@@ -2,7 +2,10 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 from pydantic import Field, BaseModel, computed_field
-from typing import List
+from typing import List, Any, Literal, Callable
+
+from pydantic.main import IncEx
+from pyproj import Geod
 
 
 class MapType(str, Enum):
@@ -22,6 +25,7 @@ class BaseMapUrl(BaseModel, ABC):
     def generate_url(self) -> str:
         pass
 
+    @computed_field
     @property
     def url(self) -> str:
         return self.generate_url()
@@ -66,6 +70,18 @@ class SentinelHubMapUrl(BaseMapUrl):
 
     def generate_url(self) -> str:
         return f"https://apps.sentinel-hub.com/eo-browser/?zoom={self.zoom}&lat={self.lat}&lng={self.lon}"
+
+class BBox(BaseModel):
+    min_lon: float = Field(..., ge=-180, le=180)
+    min_lat: float = Field(..., ge=-90, le=90)
+    max_lon: float = Field(..., ge=-180, le=180)
+    max_lat: float = Field(..., ge=-90, le=90)
+
+    def as_tuple(self) -> tuple[float, float, float, float]:
+        return self.min_lon, self.min_lat, self.max_lon, self.max_lat
+
+    def __str__(self) -> str:
+        return f"[{self.min_lon}, {self.min_lat}, {self.max_lon}, {self.max_lat}]"
 
 class Location(BaseModel):
     lat: float = Field(description="Latitude of the site")
@@ -113,6 +129,19 @@ class Location(BaseModel):
             )
         ]
 
+    @computed_field
+    @property
+    def bbox(self) -> BBox:
+        return latlon_radius_to_bbox(self.lat, self.lon, self.radius)
+
+    @computed_field
+    @property
+    def bbox_images(self) -> BBox:
+        radius = max(self.radius, 10000)
+        # 2500px diameter is the limit on sentinel hub api, with 10m/p that is 25000m diameter and 12500 radius
+        radius = min(radius, 12400)
+        return latlon_radius_to_bbox(self.lat, self.lon, radius)
+
 class Site(Location):
     name: str = Field(description="Name of the site")
 
@@ -121,9 +150,10 @@ class Hotspot(Location):
     score: int = Field(description="Likelihood of an architectural or historical new finding. Score from 1 to 100.")
     name: str = Field(description="Name of the hotspot")
     sources: List[str] = Field(description="Sources supporting the rationale")
-    x_from_center: int = Field(description="X coordinate of the hotspot from the center of the image")
-    y_from_center: int = Field(description="Y coordinate of the hotspot from the center of the image")
+    x: int = Field(description="X coordinate of the hotspot from the top left of the original image")
+    y: int = Field(description="Y coordinate of the hotspot from the top left of the original image")
     radius_in_pixels: int = Field(description="Radius of hotspot in pixels")
+    # index_value: int = Field(description="Value of the index or pixel due to what this hotspot was selected")
 
     def to_prompt_str(self) -> str:
         out = f"Hotspot {self.name} @ ({self.lat}, {self.lon}) with radius {self.radius}\n"
@@ -166,6 +196,7 @@ class Image(BaseModel):
     label: str = Field(description="Image type")
     url: str = Field(description="Image url")
     filename: str = Field(description="Image local filename")
+    size: tuple[int,int] = Field(description="Image width and height in pixels")
 
 class UserInput(BaseModel):
     lat: float | None = Field(description="Latitude of the potential site", default=None)
@@ -186,3 +217,28 @@ class RemoteSensingState(BaseModel):
     user_input: UserInput | None = None
     prompt_log: List[str] = Field(default_factory=list, description="Prompt log")
 
+
+def latlon_radius_to_bbox(lat_center, lon_center, radius_m):
+    """
+    Given a center point (lat_center, lon_center) in degrees (WGS84)
+    and a radius in meters, return (min_lon, min_lat, max_lon, max_lat)
+    of the bounding box that contains the entire circle of radius_m.
+
+    This uses PyProj.Geod on the WGS84 ellipsoid to get accurate geodetic
+    offsets for N, E, S, W directions.
+    """
+    geod = Geod(ellps="WGS84")
+
+    # Bearings: 0° = North, 90° = East, 180° = South, 270° = West
+    # Use .fwd(lon, lat, azimuth, distance) → (lon2, lat2, back_az)
+    lon_n, lat_n, _ = geod.fwd(lon_center, lat_center, 0,   radius_m)
+    lon_s, lat_s, _ = geod.fwd(lon_center, lat_center, 180, radius_m)
+    lon_e, lat_e, _ = geod.fwd(lon_center, lat_center, 90,  radius_m)
+    lon_w, lat_w, _ = geod.fwd(lon_center, lat_center, 270, radius_m)
+
+    min_lat = min(lat_s, lat_n)
+    max_lat = max(lat_s, lat_n)
+    min_lon = min(lon_w, lon_e)
+    max_lon = max(lon_w, lon_e)
+
+    return BBox(min_lon=min_lon, min_lat=min_lat, max_lon=max_lon, max_lat=max_lat)

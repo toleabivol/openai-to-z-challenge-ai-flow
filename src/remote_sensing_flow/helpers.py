@@ -2,7 +2,7 @@ import asyncio
 from typing import List
 
 from litellm import ContentPolicyViolationError, BadRequestError
-from models import PotentialSite, ImageAnalysis, Hotspot
+from models import PotentialSite, ImageAnalysis, Hotspot, ClosestKnownSite
 from crewai import LLM
 from jinja2 import Template
 from pydantic import BaseModel
@@ -11,13 +11,13 @@ import re
 from math import radians, sin, cos, sqrt, atan2
 import logging
 import cv2
-import numpy as np
-import urllib.request
+from pyproj import Geod
 import os
+
 LOGGER = logging.getLogger('remote_sensing_flow_helpers')
 LOGGER.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter("%(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 LOGGER.addHandler(handler)
 
@@ -101,17 +101,17 @@ def get_markdown_potential_site(potential_site: PotentialSite) -> str:
 
 def get_markdown_image_analysis(image_analysis: ImageAnalysis) -> str:
     template_str = """
-    # 🧠 Image Analysis Summary
+    # Image Analysis Summary
 
-    ## 🔍 Raw Analysis
+    ## Raw Analysis
     
     {{ analysis.analysis_raw }}
     
     {% if analysis.hotspots %}
-    ## 📌 Hotspots
+    ## Hotspots
     
     {% for h in analysis.hotspots %}
-    ### 🔸 Hotspot {{ loop.index }}
+    ### Hotspot {{ loop.index }}
     
     - **Latitude:** {{ h.lat }}
     - **Longitude:** {{ h.lon }}
@@ -135,6 +135,36 @@ def get_markdown_image_analysis(image_analysis: ImageAnalysis) -> str:
 
     template = Template(template_str)
     md_content = template.render(analysis=image_analysis)
+    return md_content
+
+
+def get_markdown_closest_known_site(closest_known_site: ClosestKnownSite) -> str:
+    template_str = """
+    ## Known Sites Check Results
+
+    ## Closest Known Site
+    
+    - Name: {{ closest_known_site.name }}
+    - Site ID: {{ closest_known_site.id }}
+    - Distance: {{ closest_known_site.distance[0] }}
+    - Type: {{ closest_known_site.type }}
+    - Description: {{ closest_known_site.description }}
+    - Coordinates: {{ closest_known_site.lat }}, {{closest_known_site.lon }}
+    
+    ## Analysis
+    - Search radius: {{ closest_known_site.radius }} meters
+    - Is within search radius: {{ closest_known_site.is_within_search_radius }}
+    
+    {% if closest_known_site.maps %}
+    **Maps:**
+    {% for m in closest_known_site.maps %}
+    - [Map {{ loop.index }}]({{ m }})
+    {% endfor %}
+    {% endif %}
+    """
+
+    template = Template(template_str)
+    md_content = template.render(closest_known_site=closest_known_site)
     return md_content
 
 MAX_RETRIES = 3
@@ -189,11 +219,11 @@ def draw_hotspots_on_image(image_path: str, hotspots: List[Hotspot], output_path
     for hotspot in hotspots:
         # Calculate pixel coordinates using x_from_center and y_from_center
         # These values should be between -1 and 1, representing position relative to center
-        center_x = int(width/2 + hotspot.x_from_center)
-        center_y = int(height/2 + hotspot.y_from_center)
+        center_x = hotspot.x
+        center_y = hotspot.y
 
         # Draw circle
-        cv2.circle(img, (center_x, center_y), hotspot.radius_in_pixels, (0, 255, 0), 5)
+        cv2.circle(img, (center_x, center_y), hotspot.radius_in_pixels, (0, 255, 0), 4)
         
         # Add text label
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -203,8 +233,8 @@ def draw_hotspots_on_image(image_path: str, hotspots: List[Hotspot], output_path
         text_y = center_y - hotspot.radius_in_pixels - 10
         
         # Draw text with background for better visibility
-        cv2.putText(img, hotspot.name, (text_x, text_y), font, font_scale, (0, 255, 0), 5)
-        cv2.putText(img, hotspot.name, (text_x, text_y), font, font_scale, (0, 0, 0), 1)
+        cv2.putText(img, f"{hotspot.name} {str(center_x)} {str(center_y)}", (text_x, text_y), font, font_scale, (0, 255, 0), 2)
+        cv2.putText(img, f"{hotspot.name} {str(center_x)} {str(center_y)}", (text_x, text_y), font, font_scale, (0, 0, 0), 1)
     
     # Generate output path if not provided
     if output_path is None:
