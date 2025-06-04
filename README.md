@@ -44,6 +44,28 @@ crewai install
 
 Copy the `.env.template` to `.env` and add/replace the env var values in it
 
+Depending on your LLM provider you can configure that in .env by selecting the and then adding specific to the provider 
+configuration as described in the [CrewAI Docs>LLMs](https://docs.crewai.com/concepts/llms#provider-configuration-examples)
+
+For OpenAI :
+```text
+# Required
+LLM_PROVIDER=OPENAI
+OPENAI_API_KEY=sk-...
+```
+
+For Azure OpenAI :
+```text
+LLM_PROVIDER=AZURE
+AZURE_API_KEY=<your-api-key>
+AZURE_API_BASE=<your-resource-url>
+AZURE_API_VERSION=<api-version>
+```
+
+To chose which model is used where open the `src/remote_sensing_flow/main.py` then 
+search for places `get_llm(model_41_mini` and change to a desired model. 
+Available models are in `src/remote_sensing_flow/helpers.py`.
+
 ## Running the Project
 
 To kickstart your flow and begin execution, run this from the root folder of your project:

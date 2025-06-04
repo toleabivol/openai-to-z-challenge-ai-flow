@@ -8,7 +8,7 @@ import logging
 import argparse
 from openai import OpenAI
 
-from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, model_o3, \
+from remote_sensing_flow.helpers import get_llm, model_41_mini, model_o4_mini, model_o3, \
     get_markdown_image_analysis, model_41, safe_kickoff, draw_hotspots_on_image, \
     get_markdown_closest_known_site, get_closest_known_site
 from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
@@ -92,7 +92,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             tools=[
                 SearchTool()
             ],
-            llm=get_llm_azure(model_41_mini, 0.3),
+            llm=get_llm(model_41_mini, 0.3),
             verbose=True,
             # reasoning=True,
             # max_iter=5,
@@ -170,7 +170,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     def analyze_images(self, images: List[Image]):
         LOGGER.info("Analyzing data...")
 
-        llm = get_llm_azure(model_41_mini, 0)
+        llm = get_llm(model_41_mini, 0)
         llm.response_format=ImageAnalysis
 
         analysis_role = ("You are a remote sensing specialist with experience in Amazon‐basin archaeology. "
@@ -263,7 +263,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 role="Validation Agent",
                 goal="Confirm coordinates through at least two independent methods",
                 backstory="Geospatial data integrity expert",
-                llm=get_llm_azure(model_o4_mini, 0.1),
+                llm=get_llm(model_o4_mini, 0.1),
                 tools=[
                     SearchTool()
                 ],
@@ -300,7 +300,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             goal="Compile findings into verified reports",
             backstory="Senior researcher with publication experience",
             tools=[SearchTool()],
-            llm=get_llm_azure(model_o4_mini, 0.4),  # TODO use model o3 or o4 recommended, keeping mini for testing costs reduction
+            llm=get_llm(model_o4_mini, 0.4),  # TODO use model o3 or o4 recommended, keeping mini for testing costs reduction
             verbose=True,
         )
         prompt = (f"{reporting_task} . Potential site: {self.state.potential_site}. "

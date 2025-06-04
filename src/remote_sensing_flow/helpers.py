@@ -30,14 +30,16 @@ model_4o = "gpt-4o"  # $2.5 $1.25 $10
 
 llm_provider_azure = "azure"
 llm_provider_openai = "openai"
-llm_azure_api_version = "2025-04-01-preview"
+llm_azure_api_version = os.getenv("AZURE_API_VERSION", "2025-04-01-preview")
+
+llm_provider = os.getenv("LLM_PROVIDER", llm_provider_openai).lower()
 
 
 # llm factory function
-def get_llm_azure(model_name: str, temperature: float = None) -> LLM:
+def get_llm(model_name: str, temperature: float = None) -> LLM:
     return LLM(
-        model=f"{llm_provider_azure}/{model_name}",
-        api_version=llm_azure_api_version,  # only use with azure
+        model=f"{llm_provider}/{model_name}",
+        api_version=llm_azure_api_version if llm_provider == llm_provider_azure else None,  # only use with azure
         additional_drop_params=["stop"],
         drop_params=True,
         verbose=True,
