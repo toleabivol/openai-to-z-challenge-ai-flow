@@ -90,7 +90,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                  "Do not perform any satellite imagery analysis unless already done by someone else and published.",
             backstory="Expert in archaeological studies and historical research. Language expert.",
             tools=[
-                # SearchTool()
+                SearchTool()
             ],
             llm=get_llm_azure(model_41_mini, 0.3),
             verbose=True,
@@ -265,7 +265,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 backstory="Geospatial data integrity expert",
                 llm=get_llm_azure(model_o4_mini, 0.1),
                 tools=[
-                    # SearchTool()
+                    SearchTool()
                 ],
                 verbose=True,
                 # reasoning=True
