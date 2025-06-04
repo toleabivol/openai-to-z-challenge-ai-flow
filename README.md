@@ -4,6 +4,8 @@ Welcome to the WahrCo.de Crew to Z project, powered by [crewAI](https://crewai.c
 A multi-agent AI system that also uses tools and direct llm calls to collaborate effectively on the task: 
 **Archaeological remote sensing of the Amazon river bazin region.**
 
+Uses AI workflow based on [CrewAI Flow](https://docs.crewai.com/concepts/flows) 
+
 ## Flow
 
 1. User input
@@ -11,8 +13,9 @@ A multi-agent AI system that also uses tools and direct llm calls to collaborate
 3. Check Close Known Sites
 4. Collect Data (Satellite Imagery)
 5. Analyze Images with LLM
-6. Cross Verification
-7. Reporting Agent
+6. Add Hotspots on the images
+7. Cross Verification
+8. Reporting Agent
 
 ## Installation
 
