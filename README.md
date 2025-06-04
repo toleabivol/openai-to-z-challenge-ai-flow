@@ -1,10 +1,22 @@
 # WahrCo.de Crew — OpenAI to Z Challenge Flow
 
-Welcome to the WahrCo.de Crew to Z Crew project, powered by [crewAI](https://crewai.com). 
+Welcome to the WahrCo.de Crew to Z project, powered by [crewAI](https://crewai.com). 
 A multi-agent AI system that also uses tools and direct llm calls to collaborate effectively on the task: 
 **Archaeological remote sensing of the Amazon river bazin region.**
 
+## Flow
+
+1. User input
+2. Researcher Agent
+3. Check Close Known Sites
+4. Collect Data (Satellite Imagery)
+5. Analyze Images with LLM
+6. Cross Verification
+7. Reporting Agent
+
 ## Installation
+
+Details at https://docs.crewai.com/installation
 
 Ensure you have Python >=3.12 <3.13 installed on your system. 
 
@@ -13,8 +25,13 @@ Install uv:
 ```bash
 pip install uv
 ```
+Install CrewAI uv tool:
+```bash
+uv tool install crewai
+```
 
-Next, navigate to your project directory and install the dependencies:
+Next, navigate to your project directory and install the dependencies 
+(this will also create a virtual environment in `.venv`):
 
 ```bash
 crewai install
@@ -22,7 +39,7 @@ crewai install
 
 ### Customizing
 
-**Add your `OPENAI_API_KEY` into the `.env` file**
+Copy the `.env.template` to `.env` and add/replace the env var values in it
 
 ## Running the Project
 
@@ -31,11 +48,53 @@ To kickstart your flow and begin execution, run this from the root folder of you
 ```bash
 crewai run
 ```
+or activate the virtual env and run the python script
+```bash
+source .venv/bin/activate
+python src/remote_sensing_flow/main.py
+```
+
+There are more ways to run this project
+
+### Option 0 - fast test no inputs argument
+If not already done, activate virtual env: 
+```bash
+source .venv/bin/activate
+```
+
+This is a shortcut for: option 1 > input "y" > hit enter.
+Run the python script with `--ni 1`. This will tell the script not to ask anything and let Researcher Agent select a location.
+```bash
+python src/remote_sensing_flow/main.py --ni 1
+```
+
+### Option 1 - select no inputs
+
+After running the script will ask you if you want to input coordinates. Input "n" and hit enter.
+The script will then tell the Researcher Agent to select a location and pass it on through the flow.
+
+### Option 2 - add inputs 
+
+After running the script will ask you if you want to input coordinates. Input "y" and hit enter.
+The script will then ask for lat, long and radius in meters. 
+The script will ask if you want exactly this location to be used. 
+
+#### Option 2.1 non-exact
+Input "n" and enter.
+The Researcher agent will then use the input as a reference but may diverge from it.
+
+#### Option 2.2 exact
+Input "y" and enter.
+The Researcher agent will then use the input and do not diverge from it. The flow will also be based on the input. 
+E.g. the images will be of the exact coordinates with the exact size (only limited to certain hardcoded min and max). 
+
+After that the Researcher 
+Agent will check the coordinates for textual or historical significants and add this info and pass it on through the flow. 
 
 This command initializes the `remote_sensing_flow` Flow.
 
 The result will be a folder with satellite images and .md files (mainly `report.md`) in the `output/{potential_site_name}/`.
-See `output_example/`
+For examples see `output_example/`
 
 ## Output Report Example
 
