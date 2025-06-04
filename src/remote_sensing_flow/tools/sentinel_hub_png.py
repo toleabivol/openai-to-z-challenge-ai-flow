@@ -5,12 +5,14 @@ import boto3
 from asyncio import gather, to_thread
 from crewai.tools import BaseTool
 from dotenv import load_dotenv
+import rasterio
+import numpy as np
 import os
-from ..helpers import create_safe_filename
+# from ..helpers import create_safe_filename
 from sentinelhub import (
     CRS, BBox, DataCollection, MimeType,
     MosaickingOrder, SentinelHubRequest,
-    bbox_to_dimensions, SHConfig
+    bbox_to_dimensions, SHConfig, SentinelHubStatistical
 )
 import logging
 LOGGER = logging.getLogger('remote_sensing_flow_s_hub_png')
@@ -21,6 +23,22 @@ handler.setFormatter(formatter)
 LOGGER.addHandler(handler)
 load_dotenv()
 
+def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False) -> str:
+    import datetime
+    import re
+    """
+    Create a safe filename by replacing invalid characters
+    """
+    timestamp_str = ''
+    if timestamp:
+        timestamp = datetime.datetime.now()
+        # Format timestamp in a safe way
+        timestamp_str = "_" + timestamp.strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Replace any invalid Windows characters
+    safe_name = re.sub(r'[<>:"/\\|?*\s]', '-', base_name)
+
+    return f"{safe_name}{timestamp_str}{extension}"
 
 class SentinelS3PngUploader(BaseTool):
     name: str = "Sentinel HUB S3 URL"
@@ -39,6 +57,35 @@ class SentinelS3PngUploader(BaseTool):
         if not config.sh_client_id or not config.sh_client_secret:
             raise ValueError("Missing Sentinel Hub credentials")
 
+        date_from = '2023-01-01'
+        date_to = '2025-05-25'
+
+        LOGGER.info(f"Getting min max elevation from DEM GeoTIFF")
+
+        # elevation_min, elevation_max = self.get_elevation_stats(config, bbox, date_from, date_to)
+        script = """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["DEM"],
+            output: { bands: 1, sampleType: "FLOAT32" }
+          };
+        }
+        
+        function evaluatePixel(sample) {
+          return [sample.DEM];
+        }
+        """
+        label, s3_url, filename, size = await self.process_image("elevation_dem", lat, lon, script, config, bbox, date_from, date_to, output_folder, False)
+        elevation_min, elevation_max = self.get_elevation_from_dem_image(os.path.join(output_folder, filename))
+
+        LOGGER.info(f"Min elevation: {elevation_min:.2f} m")
+        LOGGER.info(f"Max elevation: {elevation_max:.2f} m")
+
+        # I think we need to add some buffer ?
+        elevation_min += 10
+        elevation_max += 10
+
         evalscripts = {
             #  DEM values are in meters and can be negative for areas which lie below sea level,
             #  so it is recommended to set the output format in your evalscript to FLOAT32.
@@ -48,25 +95,68 @@ class SentinelS3PngUploader(BaseTool):
                 function setup() {
                   return {
                     input: ["DEM"],
-                    output: { bands: 1 }
-                  }
+                    output: {
+                      bands: 1,
+                      sampleType: "UINT8"
+                    }
+                  };
                 }
+                
+                // Amazon‐focused window: 0–200 m above sea level.
+                // Elevations below 0 m clamp at 0; above 200 m clamp at 200.
+                const DEM_MIN = """ + str(elevation_min) + """;
+                const DEM_MAX = """ + str(elevation_max) + """;
+                
                 function evaluatePixel(sample) {
-                  return [sample.DEM/1000]
+                  let elev = sample.DEM;
+                
+                  // 1) Clamp elevation to [DEM_MIN..DEM_MAX m]
+                  if (elev < DEM_MIN) elev = DEM_MIN;
+                  else if (elev > DEM_MAX) elev = DEM_MAX;
+                
+                  // 2) Normalize → [0..1]
+                  let norm = (elev - DEM_MIN) / (DEM_MAX - DEM_MIN);
+                
+                  // 3) Scale to [0..255] and round to integer
+                  let byteVal = Math.round(norm * 255.0);
+                
+                  return [byteVal];
                 }
+
             """,
-            "mapzen_dem": """
-                //VERSION=3
-                function setup() {
-                  return {
-                    input: ["DEM"],
-                    output: { bands: 1 }
-                  }
-                }
-                function evaluatePixel(sample) {
-                  return [sample.DEM/1000]
-                }
-            """,
+            # "mapzen_dem": """
+            #     //VERSION=3
+            #     function setup() {
+            #       return {
+            #         input: ["DEM"],
+            #         output: {
+            #           bands: 1,
+            #           sampleType: "UINT8"
+            #         }
+            #       };
+            #     }
+            #
+            #     // Amazon‐focused window: 0–500 m above sea level.
+            #     // Elevations below DEM_MIN m clamp at DEM_MIN; above 200 m clamp at 200.
+            #     const DEM_MIN = """ + elevation_min + """;
+            #     const DEM_MAX = """ + elevation_max + """;
+            #
+            #     function evaluatePixel(sample) {
+            #       let elev = sample.DEM;
+            #
+            #       // 1) Clamp elevation to [DEM_MIN..DEM_MAX m]
+            #       if (elev < DEM_MIN) elev = DEM_MIN;
+            #       else if (elev > DEM_MAX) elev = DEM_MAX;
+            #
+            #       // 2) Normalize → [0..1]
+            #       let norm = (elev - DEM_MIN) / (DEM_MAX - DEM_MIN);
+            #
+            #       // 3) Scale to [0..255] and round to integer
+            #       let byteVal = Math.round(norm * 255.0);
+            #
+            #       return [byteVal];
+            #     }
+            # """,
             "landsat89_l2_true_color": """
                 //VERSION=3
                 function setup() {
@@ -195,16 +285,14 @@ class SentinelS3PngUploader(BaseTool):
 
         tasks = []
         for label, script in evalscripts.items():
-            tasks.append(self.process_image(label, lat, lon, script, config, bbox, output_folder))
+            tasks.append(self.process_image(label, lat, lon, script, config, bbox, date_from, date_to, output_folder))
         sentinelhub_results = await gather(*tasks)
 
         result_urls = {label: (url, filename, size) for label, url, filename, size in sentinelhub_results}
 
         return result_urls
 
-    async def process_image(self, label, lat, lon, script, config, bbox, output_folder):
-        date_from = '2023-01-01'
-        date_to = '2025-05-25'
+    async def process_image(self, label, lat, lon, script, config, bbox, date_from, date_to, output_folder, upload_to_s3: bool = True):
 
         s3 = boto3.client('s3')
         bucket_name = os.getenv("S3_DATA_BUCKET")
@@ -215,7 +303,7 @@ class SentinelS3PngUploader(BaseTool):
         resolution = 10
         if label.startswith('landsat'):
             data_collection = DataCollection.LANDSAT_OT_L2
-        elif label == 'copernicus_dem':
+        elif label in ['copernicus_dem', 'elevation_dem']:
             data_collection = DataCollection.DEM_COPERNICUS_30
             # resolution = 30
         elif label == 'mapzen_dem':
@@ -234,7 +322,7 @@ class SentinelS3PngUploader(BaseTool):
                     mosaicking_order=MosaickingOrder.LEAST_CC,
                 )
             ],
-            responses=[SentinelHubRequest.output_response("default", MimeType.PNG)],
+            responses=[SentinelHubRequest.output_response("default", MimeType.TIFF if label == 'elevation_dem' else MimeType.PNG)],
             bbox=bbox,
             size=size,
             config=config,
@@ -244,33 +332,42 @@ class SentinelS3PngUploader(BaseTool):
         def request_save_data(s_hub_request):
             s_hub_request.save_data()
 
-        await to_thread(request_save_data, request)
+        def request_get_data(s_hub_request):
+            s_hub_request.get_data()
+
+        if output_folder:
+            await to_thread(request_save_data, request)
+        else:
+            return await to_thread(request_get_data, request)
 
         png_path = None
         for root, _, files in os.walk(tmp_output_folder):
             for file in files:
-                if file.endswith('.png'):
+                if file.endswith('.tiff' if label == 'elevation_dem' else '.png'):
                     png_path = os.path.join(root, file)
                     break
             if png_path:
                 break
 
         if not png_path:
-            raise FileNotFoundError(f"PNG file not found in {tmp_output_folder} for {label}.")
+            raise FileNotFoundError(f"PNG/TIFF file not found in {tmp_output_folder} for {label}.")
 
         #TODO optimize image losslessly with pngcrush ? should not influence image analysis later
 
-        LOGGER.info(f'Uploading to s3 {label}')
-        filename = create_safe_filename(f"{label}_{lat}_{lon}_{date_from}_{date_to}", '.png', True)
-        key = f"sentinel_hub/{filename}"
+        filename = create_safe_filename(f"{label}_{lat}_{lon}_{date_from}_{date_to}", '.tiff' if label == 'elevation_dem' else '.png', True)
 
-        await asyncio.to_thread(s3.upload_file, png_path, bucket_name, key)
+        s3_url = ''
+        if upload_to_s3:
+            LOGGER.info(f'Uploading to s3 {label}')
+            key = f"sentinel_hub/{filename}"
 
-        s3_url = await asyncio.to_thread(s3.generate_presigned_url,
-            'get_object',
-            Params={'Bucket': bucket_name, 'Key': key},
-            ExpiresIn=7200
-        )
+            await asyncio.to_thread(s3.upload_file, png_path, bucket_name, key)
+
+            s3_url = await asyncio.to_thread(s3.generate_presigned_url,
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': key},
+                ExpiresIn=7200
+            )
 
         if output_folder:
             self.copy_and_rename(png_path, output_folder, filename)
@@ -285,9 +382,97 @@ class SentinelS3PngUploader(BaseTool):
         new_path = f"{dest_path}/{new_name}"
         shutil.move(f"{dest_path}/{old_filename}", new_path)
 
+    def get_elevation_stats(self, config, bbox, date_from, date_to):
+        """
+        Could not get this work - i get an 500 error no matter what i do
+        Switching for now to the solution to get the dem image without constraints
+        analyze it and then get it again with elevation constraints
+        """
+        LOGGER.info("Get elevation stats")
+        # input_data = SentinelHubStatistical.input_data(
+        #     data_collection=DataCollection.DEM_COPERNICUS_30,
+        #     other_args={
+        #         'type' : "DEM"
+        #     }
+        # )
+
+        input_data = [{
+            "type": "dem",
+            "dataFilter": {
+                "demInstance": "COPERNICUS_30"
+            }
+        }]
+
+        aggregation = {
+            "timeRange": {
+                "from": date_to + "T00:00:00Z",
+                "to": date_to + "T23:59:59Z"
+            },
+            "aggregationInterval": {
+                "of": "P1D"
+            },
+            "evalscript": """
+                //VERSION=3
+                function setup() {
+                    return {
+                        input: ["DEM"],
+                        output: [{ id: "elevation", bands: 1, sampleType: "FLOAT32" }]
+                    };
+                }
+                function evaluatePixel(sample) {
+                    return {
+                        elevation: [sample.DEM]
+                    };
+                }
+            """
+        }
+
+        calculations = {
+            "default": {
+                "statistics": {
+                    "elevation": {
+                        "min": {},
+                        "max": {}
+                    }
+                }
+            }
+        }
+
+        request = SentinelHubStatistical(
+            aggregation=aggregation,
+            input_data=input_data,
+            bbox=bbox,
+            # calculations=calculations,
+            config=config
+        )
+
+
+        response = request.get_data()
+        print(response)
+        elevation_stats = response['data'][0]['outputs']['default']['stats']['statistics']
+
+        print(f"Min elevation: {elevation_stats['min']} m")
+        print(f"Max elevation: {elevation_stats['max']} m")
+
+        return elevation_stats['min'], elevation_stats['max']
+
+    def get_elevation_from_dem_image(self, filename):
+        with rasterio.open(filename) as src:
+            # Read the first band (elevation data)
+            elevation_data = src.read(1)
+
+            # Mask no-data values
+            elevation_data = np.ma.masked_equal(elevation_data, src.nodata)
+
+            # Compute stats
+            elevation_min = float(elevation_data.min())
+            elevation_max = float(elevation_data.max())
+
+        return elevation_min, elevation_max
+
 
 if __name__ == "__main__":
     tool = SentinelS3PngUploader()
     b_box = (-67.4, -7.96, -67.2, -7.94)
-    result = tool._run(lat=-7.95, lon=-67.3, bbox=b_box)
+    result = asyncio.run( tool._run(lat=-7.95, lon=-67.3, bbox=b_box, output_folder='../output/test') )
     LOGGER.info(result)

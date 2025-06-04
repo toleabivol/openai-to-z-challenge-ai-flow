@@ -6,19 +6,17 @@ from crewai.flow.flow import Flow, listen, start
 from crewai.flow.persistence import persist
 import logging
 import argparse
-import pandas as pd
 from openai import OpenAI
 
 from remote_sensing_flow.helpers import get_llm_azure, model_41_mini, model_o4_mini, model_o3, \
-    get_markdown_image_analysis, model_41, safe_kickoff, haversine_distance, draw_hotspots_on_image, \
-    get_markdown_closest_known_site
+    get_markdown_image_analysis, model_41, safe_kickoff, draw_hotspots_on_image, \
+    get_markdown_closest_known_site, get_closest_known_site
 from remote_sensing_flow.tasks import research_task, validation_task, reporting_task, \
     image_analysis_task
 from remote_sensing_flow.tools.search import SearchTool
-from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader
-from remote_sensing_flow.helpers import get_markdown_potential_site, create_safe_filename
-from remote_sensing_flow.models import RemoteSensingState, PotentialSite, Image, ImageAnalysis, UserInput, \
-    ClosestKnownSite
+from remote_sensing_flow.tools.sentinel_hub_png import SentinelS3PngUploader, create_safe_filename
+from remote_sensing_flow.helpers import get_markdown_potential_site
+from remote_sensing_flow.models import RemoteSensingState, PotentialSite, Image, ImageAnalysis, UserInput
 
 LOGGER = logging.getLogger('remote_sensing_flow')
 LOGGER.setLevel(logging.DEBUG)
@@ -134,58 +132,17 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         LOGGER.info("Checking if site is already known...")
 
         try:
-            known_sites_df = pd.read_csv('input_data/known_sites.csv')
-
-            # Get the potential site coordinates
-            potential_lat = self.state.potential_site.lat
-            potential_lon = self.state.potential_site.lon
-            search_radius = self.state.potential_site.radius
-
-            # Initialize variables for closest site
-            closest_distance = float('inf')
-            closest_site = None
-
-            # Check each known site
-            for _, site in known_sites_df.iterrows():
-                distance = haversine_distance(
-                    potential_lat,
-                    potential_lon,
-                    site['latitude'],
-                    site['longitude']
-                )
-
-                if distance < closest_distance:
-                    closest_distance = distance
-                    closest_site = site
-
-            if closest_site is not None:
-                LOGGER.info(f"Closest known site found: {closest_site}")
-                # Create ClosestKnownSite instance
-                closest_known_site = ClosestKnownSite(
-                    name=closest_site['site_name'],
-                    lat=closest_site['latitude'],
-                    lon=closest_site['longitude'],
-                    radius=search_radius,
-                    distance=[f"{closest_distance:.2f} meters"],
-                    is_within_search_radius=closest_distance <= search_radius,
-                    type=closest_site['site_type_description'],
-                    id=str(closest_site['site_id']),
-                    description=closest_site.get('nature_description', 'No description available'),
-                    site_summary=closest_site['site_summary'] if pd.notna(closest_site['site_summary']) else 'No summary available'
-                )
-
-                # Log the results
-                LOGGER.info(f"Closest known site: {closest_known_site.name}")
-                LOGGER.info(f"Distance to closest site: {closest_distance:.2f} meters")
-                LOGGER.info(f"Within search radius: {closest_known_site.is_within_search_radius}")
-
-                # Save the check results to a file in the output folder
-                check_results_path = os.path.join(self.output_folder, "known_sites_check.md")
-                with open(check_results_path, "w") as f:
+            closest_known_site = get_closest_known_site(self.state.potential_site.lat, self.state.potential_site.lon,
+                                                        self.state.potential_site.radius)
+            if closest_known_site:
+                known_sites_check_results_path = os.path.join(self.output_folder, "known_sites_check.md")
+                with open(known_sites_check_results_path, "w") as f:
                     f.write(get_markdown_closest_known_site(closest_known_site))
                 self.state.closest_known_site = closest_known_site
                 return closest_known_site
-            return {"No known sites found"}
+            else:
+                LOGGER.info(f"Closest known site not found")
+                return {"No known sites found"}
 
         except FileNotFoundError:
             LOGGER.warning("Known sites database file not found at input_data/known_sites.csv")
@@ -197,12 +154,13 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
     @listen(check_known_sites)
     async def collect_data(self, research_output):
 
-        bbox = self.state.potential_site.bbox.as_tuple()
-        if not self.state.user_input.exact:
-            bbox = self.state.potential_site.bbox_images.as_tuple()
+        bbox_images = self.state.potential_site.bbox.as_tuple()
+        # if user did not specify --exact we calculate a bbox for the images with a radius of 10km
+        if not self.state.user_input or not self.state.user_input.exact:
+            bbox_images = self.state.potential_site.bbox_images.as_tuple()
 
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
-                                                    bbox, self.output_folder)
+                                                    bbox_images, self.output_folder)
         for label, (url, filename, size) in images.items():
             self.state.images.append(Image(label=label,url=url, filename=filename, size=size))
 
@@ -223,12 +181,14 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             - radius: {self.state.potential_site.radius};
             - Bounding Box of the proposed site (min_lon, min_lat, max_lon, max_lat) : {self.state.potential_site.bbox} .
             {image_analysis_task}
-            All original images are the same size: width {self.state.images[0].size[0]} px, 
-            height {self.state.images[0].size[1]} px. You will get downscaled images. 
-            Bounding Box of the images (min_lon, min_lat, max_lon, max_lat) : {self.state.potential_site.bbox_images} .
-            Calculate the hotspot coordinates that are in x,y pixel coordinates back to the images' original size 
-            so that they are in the correct place when set on the original image.
             """
+            #         """
+            #         All original images are the same size: width {self.state.images[0].size[0]} px,
+            # height {self.state.images[0].size[1]} px. You will get downscaled images.
+            # Bounding Box of the images (min_lon, min_lat, max_lon, max_lat) : {self.state.potential_site.bbox_images} .
+            # Calculate the hotspot coordinates that are in x,y pixel coordinates back to the images' original size
+            # so that they are in the correct place when set on the original image.
+            # """
         }]
         for image in self.state.images:
             # Make it clear to the LLM which image it is.
@@ -293,7 +253,10 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             for image in self.state.images:
                 draw_hotspots_on_image(
                     os.path.join(self.output_folder, image.filename),
-                    self.state.image_analysis.hotspots
+                    self.state.image_analysis.hotspots,
+                    image.size,
+                    (self.state.image_analysis.received_images_size_width,
+                    self.state.image_analysis.received_images_size_height)
                 )
 
             validator = Agent(

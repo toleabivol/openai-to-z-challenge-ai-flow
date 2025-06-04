@@ -1,6 +1,7 @@
 import asyncio
 from typing import List
 
+import pandas as pd
 from litellm import ContentPolicyViolationError, BadRequestError
 from models import PotentialSite, ImageAnalysis, Hotspot, ClosestKnownSite
 from crewai import LLM
@@ -45,21 +46,6 @@ def get_llm_azure(model_name: str, temperature: float = None) -> LLM:
         verbose=True,
         temperature=temperature
     )
-
-def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False) -> str:
-    """
-    Create a safe filename by replacing invalid characters
-    """
-    timestamp_str = ''
-    if timestamp:
-        timestamp = datetime.datetime.now()
-        # Format timestamp in a safe way
-        timestamp_str = "_" + timestamp.strftime("%Y-%m-%d_%H-%M-%S")
-
-    # Replace any invalid Windows characters
-    safe_name = re.sub(r'[<>:"/\\|?*\s]', '-', base_name)
-
-    return f"{safe_name}{timestamp_str}{extension}"
 
 
 def get_markdown_potential_site(potential_site: PotentialSite) -> str:
@@ -167,6 +153,48 @@ def get_markdown_closest_known_site(closest_known_site: ClosestKnownSite) -> str
     md_content = template.render(closest_known_site=closest_known_site)
     return md_content
 
+def get_closest_known_site(lat: float, lon: float, radius: int) -> ClosestKnownSite | None :
+    known_sites_df = pd.read_csv('input_data/known_sites.csv')
+
+    closest_distance = float('inf')
+    closest_site = None
+
+    for _, site in known_sites_df.iterrows():
+        distance = haversine_distance(
+            lat,
+            lon,
+            site['latitude'],
+            site['longitude']
+        )
+
+        if distance < closest_distance:
+            closest_distance = distance
+            closest_site = site
+
+    closest_known_site = None
+    if closest_site is not None:
+        LOGGER.info(f"Closest known site found: {closest_site}")
+
+        closest_known_site = ClosestKnownSite(
+            name=closest_site['site_name'],
+            lat=closest_site['latitude'],
+            lon=closest_site['longitude'],
+            radius=radius,
+            distance=[f"{closest_distance:.2f} meters"],
+            is_within_search_radius=closest_distance <= radius,
+            type=closest_site['site_type_description'],
+            id=str(closest_site['site_id']),
+            description=closest_site.get('nature_description', 'No description available'),
+            site_summary=closest_site['site_summary'] if pd.notna(
+                closest_site['site_summary']) else 'No summary available'
+        )
+
+        LOGGER.info(f"Closest known site: {closest_known_site.name}")
+        LOGGER.info(f"Distance to closest site: {closest_distance:.2f} meters")
+        LOGGER.info(f"Within search radius: {closest_known_site.is_within_search_radius}")
+
+    return closest_known_site
+
 MAX_RETRIES = 3
 async def safe_kickoff(agent, prompt: str, response_format = None) -> BaseModel:
     for attempt in range(1, MAX_RETRIES + 1):
@@ -198,7 +226,9 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
     return distance
 
-def draw_hotspots_on_image(image_path: str, hotspots: List[Hotspot], output_path: str = None):
+def draw_hotspots_on_image(image_path: str, hotspots: List[Hotspot], image_size: tuple[int,int],
+                           llm_received_image_size: tuple[int,int],
+                           output_path: str = None):
     """
     Draw hotspots on an image as circles with text labels.
     
@@ -207,30 +237,43 @@ def draw_hotspots_on_image(image_path: str, hotspots: List[Hotspot], output_path
         hotspots: List of Hotspot objects with lat, lon, radius, name, and x_from_center/y_from_center attributes
         output_path: Path where to save the output image. If None, will append '_hotspots' to original name
     """
+
+
     img = cv2.imread(image_path)
-    
+    LOGGER.info(f"Drawing hotspots on image: {image_path}")
     if img is None:
         LOGGER.error(f"Failed to load image from {image_path}")
         return
     
     height, width = img.shape[:2]
+    LOGGER.info(f"Original Image size {width} {height}")
+    LOGGER.info(f"Received by LLM Image size {llm_received_image_size[0]} {llm_received_image_size[1]}")
+
+    # Calculate the scaling factor
+    scale_x = width / llm_received_image_size[0]
+    scale_y = height / llm_received_image_size[1]
+
+    LOGGER.info(f"Scale factor x: {scale_x}, y: {scale_y}")
     
     # For each hotspot
     for hotspot in hotspots:
         # Calculate pixel coordinates using x_from_center and y_from_center
         # These values should be between -1 and 1, representing position relative to center
-        center_x = hotspot.x
-        center_y = hotspot.y
+        center_x = int(hotspot.x * scale_x)
+        center_y = int(hotspot.y * scale_y)
+        radius = int(hotspot.radius_in_pixels * scale_x)
+
+        LOGGER.info(f"Hotspot {hotspot.name} {str(center_x)} {str(center_y)} {radius}")
 
         # Draw circle
-        cv2.circle(img, (center_x, center_y), hotspot.radius_in_pixels, (0, 255, 0), 4)
+        cv2.circle(img, (center_x, center_y), radius, (0, 255, 0), 4)
         
         # Add text label
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5
         text_size = cv2.getTextSize(hotspot.name, font, font_scale, 1)[0]
         text_x = center_x - text_size[0]//2
-        text_y = center_y - hotspot.radius_in_pixels - 10
+        text_y = center_y - radius - 10
         
         # Draw text with background for better visibility
         cv2.putText(img, f"{hotspot.name} {str(center_x)} {str(center_y)}", (text_x, text_y), font, font_scale, (0, 255, 0), 2)

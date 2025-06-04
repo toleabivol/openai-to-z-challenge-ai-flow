@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 from pydantic import Field, BaseModel, computed_field
-from typing import List, Any, Literal, Callable
+from typing import List, Any, Literal, Callable, Tuple
 
 from pydantic.main import IncEx
 from pyproj import Geod
@@ -165,6 +165,8 @@ class Hotspot(Location):
 class ImageAnalysis(BaseModel):
     analysis_raw: str = Field(description="Raw text of the image analysis output")
     hotspots: List[Hotspot] = Field(description="List of hotspots or precis point of interest with anomalies that are relevant to the potential site")
+    received_images_size_width: int = Field(description="Size, in pixels, of the images, width, that was received.")
+    received_images_size_height: int = Field(description="Size, in pixels, of the images, height, that was received.")
 
     def to_prompt_str(self):
         return ("Image Analysis: " + self.analysis_raw +
