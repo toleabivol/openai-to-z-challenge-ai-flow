@@ -123,13 +123,18 @@ image_analysis_task = f"""List all the images you received and state their: labe
     Perform remote sensing on the attached images for archaeological anomalies.
     Analyze these layers together and propose any new potential archaeological sites (e.g., mounds, canals, earthworks, or other human-made anomalies) that appear in this area.
     Identify hotspots and pin point them with lat lon, radius and x,y px from top left corner of the image. Add a rationale. 
+    
+    Use only the data from the attached here images and do not use external knowledge.
+    Do not assume any facts or features not directly observable in the image data.
+    Avoid guessing, hallucinating, or inferring based on prior geographical or historical knowledge.
+    If an observation cannot be confirmed from the data provided, respond with: "Not enough data in the image to determine this."
+    
     Explain which spectral/DEM cues led you to flag it (e.g., subtle mound shape in DEM + vegetation anomaly in NDVI, linear discoloration in false-color, moisture signature in NDWI, etc.) 
     
     Additionally to the identified archaeological hotspots: add one exactly at the bottom right corner of the image for debugging.
     
     When you find something worthy give a lot more info and details.
     All images have the same coordinates and cover the same area, therefore can be overlaid one on top of each-other.
-    
     Center of the images correspond to the proposed general potential site lat and long.
     Give each identified hotspot a score from 1 to 100 based on the likelihood of being new historical or archaeological findings.
     Use WGS84 for coordinates.

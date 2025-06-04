@@ -82,7 +82,7 @@ class SentinelS3PngUploader(BaseTool):
         LOGGER.info(f"Min elevation: {elevation_min:.2f} m")
         LOGGER.info(f"Max elevation: {elevation_max:.2f} m")
 
-        # I think we need to add some buffer ?
+        # I think we need to add some buffer?
         elevation_min += 10
         elevation_max += 10
 

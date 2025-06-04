@@ -92,7 +92,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             tools=[
                 # SearchTool()
             ],
-            llm=get_llm_azure(model_41, 0.3),
+            llm=get_llm_azure(model_41_mini, 0.3),
             verbose=True,
             # reasoning=True,
             # max_iter=5,
