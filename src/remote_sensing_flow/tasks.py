@@ -134,7 +134,7 @@ image_analysis_task = f"""List all the images you received and state their: labe
     Additionally to the identified archaeological hotspots: add one exactly at the bottom right corner of the image for debugging.
     
     When you find something worthy give a lot more info and details.
-    All images have the same coordinates and cover the same area, therefore can be overlaid one on top of each-other.
+    All images, besides high_resolution ones, have the same coordinates and cover the same area, therefore can be overlaid one on top of each-other.
     Center of the images correspond to the proposed general potential site lat and long.
     Give each identified hotspot a score from 1 to 100 based on the likelihood of being new historical or archaeological findings.
     Use WGS84 for coordinates.

@@ -4,6 +4,8 @@ Welcome to the WahrCo.de Crew to Z project, powered by [crewAI](https://crewai.c
 A multi-agent AI system that also uses tools and direct llm calls to collaborate effectively on the task: 
 **Archaeological remote sensing of the Amazon river bazin region.**
 
+![DEM and hillshade](./doc/dem_hillshade.png "DEM and hillshade")
+
 Uses AI workflow based on [CrewAI Flow](https://docs.crewai.com/concepts/flows) 
 
 ## Flow
@@ -12,12 +14,23 @@ Uses AI workflow based on [CrewAI Flow](https://docs.crewai.com/concepts/flows)
 2. Researcher Agent
 3. Check Close Known Sites
 4. Collect Data (Satellite Imagery)
-5. Analyze Images with LLM
-6. Add Hotspots on the images
-7. Cross Verification
-8. Reporting Agent
+5. Processes data, e.g. extracts different bands and transforms LiDAR files to GeoTIFF and PNG
+6. Analyze Images with LLM
+7. Add Hotspots on the images
+8. Cross Verification
+9. Reporting Agent
 
 ## Installation
+
+**Note** For LiDAR to work you need to use Conda as it requires pdal and so far I could not make it work with uv/pip"
+
+```bash
+conda env create -f environment.yml
+```
+
+Then skip the below installation instructions.
+
+-------------------
 
 Details at https://docs.crewai.com/installation
 

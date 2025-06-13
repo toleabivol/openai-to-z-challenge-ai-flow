@@ -161,10 +161,15 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
         # Check for available LiDAR tiles
         LOGGER.info("Check for available LiDAR tiles...")
-        lidar_data = get_lidar_data(bbox_images, self.output_folder)
+        lidar_data = await get_lidar_data(bbox_images, self.output_folder)
 
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
                                                     bbox_images, self.output_folder)
+
+        # merge lidar data and sentinel
+        if lidar_data:
+            images.update(lidar_data)
+
         for label, (url, filename, size) in images.items():
             self.state.images.append(Image(label=label,url=url, filename=filename, size=size))
 

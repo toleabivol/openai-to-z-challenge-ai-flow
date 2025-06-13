@@ -15,6 +15,9 @@ from sentinelhub import (
     bbox_to_dimensions, SHConfig, SentinelHubStatistical
 )
 import logging
+import datetime
+import re
+
 LOGGER = logging.getLogger('remote_sensing_flow_s_hub_png')
 LOGGER.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
@@ -24,8 +27,6 @@ LOGGER.addHandler(handler)
 load_dotenv()
 
 def create_safe_filename(base_name: str, extension: str = "", timestamp:bool = False) -> str:
-    import datetime
-    import re
     """
     Create a safe filename by replacing invalid characters
     """
@@ -293,10 +294,6 @@ class SentinelS3PngUploader(BaseTool):
         return result_urls
 
     async def process_image(self, label, lat, lon, script, config, bbox, date_from, date_to, output_folder, upload_to_s3: bool = True):
-
-        s3 = boto3.client('s3')
-        bucket_name = os.getenv("S3_DATA_BUCKET")
-
         LOGGER.info(f'Requesting sentinel hub for {label}')
         tmp_output_folder = tempfile.mkdtemp(label)
         data_collection = DataCollection.SENTINEL2_L2A
@@ -359,15 +356,7 @@ class SentinelS3PngUploader(BaseTool):
         s3_url = ''
         if upload_to_s3:
             LOGGER.info(f'Uploading to s3 {label}')
-            key = f"sentinel_hub/{filename}"
-
-            await asyncio.to_thread(s3.upload_file, png_path, bucket_name, key)
-
-            s3_url = await asyncio.to_thread(s3.generate_presigned_url,
-                'get_object',
-                Params={'Bucket': bucket_name, 'Key': key},
-                ExpiresIn=7200
-            )
+            s3_url = await s3_upload_and_get_link(png_path, 'sentinel_hub', filename)
 
         if output_folder:
             self.copy_and_rename(png_path, output_folder, filename)
@@ -470,6 +459,21 @@ class SentinelS3PngUploader(BaseTool):
 
         return elevation_min, elevation_max
 
+
+async def s3_upload_and_get_link(source_file_path, dest_prefix, dest_filename):
+    s3 = boto3.client('s3')
+    bucket_name = os.getenv("S3_DATA_BUCKET")
+    key = f"{dest_prefix}/{dest_filename}"
+    LOGGER.info(f'Uploading to s3 {key}')
+
+    await asyncio.to_thread(s3.upload_file, source_file_path, bucket_name, key)
+
+    s3_url = await asyncio.to_thread(s3.generate_presigned_url,
+                                     'get_object',
+                                     Params={'Bucket': bucket_name, 'Key': key},
+                                     ExpiresIn=7200
+                                     )
+    return s3_url
 
 if __name__ == "__main__":
     tool = SentinelS3PngUploader()

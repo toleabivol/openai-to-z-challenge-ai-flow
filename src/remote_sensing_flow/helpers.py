@@ -1,6 +1,7 @@
 import asyncio
 from typing import List
 
+import boto3
 import pandas as pd
 from litellm import ContentPolicyViolationError, BadRequestError
 from .models import PotentialSite, ImageAnalysis, Hotspot, ClosestKnownSite

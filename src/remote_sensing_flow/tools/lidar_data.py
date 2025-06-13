@@ -1,6 +1,9 @@
 import datetime
 import os
-
+import rasterio
+import numpy as np
+from matplotlib.colors import LightSource, Normalize
+from PIL import Image
 import earthaccess
 import pdal
 import json
@@ -10,6 +13,7 @@ import numpy as np
 from scipy.ndimage import uniform_filter
 import dotenv
 import logging
+from .sentinel_hub_png import s3_upload_and_get_link, create_safe_filename
 
 LOGGER = logging.getLogger('lidar_data')
 LOGGER.setLevel(logging.DEBUG)
@@ -21,7 +25,7 @@ LOGGER.addHandler(handler)
 dotenv.load_dotenv()
 
 
-def get_lidar_data(bbox, root_output_folder):
+async def get_lidar_data(bbox, root_output_folder):
     try:
         output_folder = f'{root_output_folder}/lidar'
         input_folder = f'{root_output_folder}/lidar/downloads'
@@ -114,106 +118,123 @@ def get_lidar_data(bbox, root_output_folder):
             pipeline.execute()
             LOGGER.info(f"DEM generated: {dem_tif}")
 
-            dem_png_path = convert_dem_to_png(dem_tif)
+            dem_png_files = convert_dem_to_png(dem_tif)
 
-            # Terrain attributes from DEM
-            dem = rd.LoadGDAL(dem_tif)
-            aspect = rd.TerrainAttribute(dem, attrib='aspect')
-            slope = rd.TerrainAttribute(dem, attrib='slope_degrees')
-            curvature = rd.TerrainAttribute(dem, attrib='profile_curvature')
+            dem_png_path, dem_png_size = dem_png_files["dem"]
+            dem_png_filename = create_safe_filename(f"dem_high_resolution_{bbox[0]}_{bbox[1]}",
+                                            '.png', True)
+            dem_s3_url = await s3_upload_and_get_link(dem_png_path, 'earthaccess', dem_png_filename)
 
-            rd.SaveGDAL(f'{output_folder}/aspect.tif', aspect)
-            rd.SaveGDAL(f'{output_folder}/slope.tif', slope)
-            rd.SaveGDAL(f'{output_folder}/curvature.tif', curvature)
-            LOGGER.info("Built aspect.tif, slope.tif, curvature.tif")
+            hillshade_png_path, hillshade_png_size = dem_png_files["hillshade"]
+            hillshade_png_filename = create_safe_filename(f"hillshade_high_resolution_{bbox[0]}_{bbox[1]}",
+                                            '.png', True)
+            hillshade_s3_url = await s3_upload_and_get_link(hillshade_png_path, 'earthaccess', hillshade_png_filename)
 
-            # dem_smoothed = rd.TerrainAttribute(dem, attrib='mean')
-            # lrm = dem - dem_smoothed
-            # rd.SaveGDAL(f'{output_folder}/lrm.tif', lrm)
-            # LOGGER.info("Built lrm.tif")
+            try:
+                # Terrain attributes from DEM
+                dem = rd.LoadGDAL(dem_tif)
+                aspect = rd.TerrainAttribute(dem, attrib='aspect')
+                slope = rd.TerrainAttribute(dem, attrib='slope_degrees')
+                curvature = rd.TerrainAttribute(dem, attrib='profile_curvature')
 
-            # Intensity
-            intensity_pipeline = {
-              "pipeline": [
-                merged,
-                {"type": "filters.range", "limits": "Classification[2:2]"},
-                {
-                  "type": "writers.gdal",
-                  "filename": f"{output_folder}/intensity_be.tif",
-                  "resolution": 1,
-                  "output_type": "idw",
-                  "radius": 1.0,
-                  "window_size": 3,
-                  "gdaldriver": "GTiff",
-                  "data_type": "float32",
-                  "dimension": "Intensity",
-                  "nodata": 0
+                rd.SaveGDAL(f'{output_folder}/aspect.tif', aspect)
+                rd.SaveGDAL(f'{output_folder}/slope.tif', slope)
+                rd.SaveGDAL(f'{output_folder}/curvature.tif', curvature)
+                LOGGER.info("Built aspect.tif, slope.tif, curvature.tif")
+
+                # dem_smoothed = rd.TerrainAttribute(dem, attrib='mean')
+                # lrm = dem - dem_smoothed
+                # rd.SaveGDAL(f'{output_folder}/lrm.tif', lrm)
+                # LOGGER.info("Built lrm.tif")
+
+                # Intensity
+                intensity_pipeline = {
+                  "pipeline": [
+                    merged,
+                    {"type": "filters.range", "limits": "Classification[2:2]"},
+                    {
+                      "type": "writers.gdal",
+                      "filename": f"{output_folder}/intensity_be.tif",
+                      "resolution": 1,
+                      "output_type": "idw",
+                      "radius": 1.0,
+                      "window_size": 3,
+                      "gdaldriver": "GTiff",
+                      "data_type": "float32",
+                      "dimension": "Intensity",
+                      "nodata": 0
+                    }
+                  ]
                 }
-              ]
-            }
-            pl = pdal.Pipeline(json.dumps(intensity_pipeline))
-            pl.execute()
-            LOGGER.info("Built intensity_be.tif")
+                pl = pdal.Pipeline(json.dumps(intensity_pipeline))
+                pl.execute()
+                LOGGER.info("Built intensity_be.tif")
 
-            # DSM
-            dsm_pipeline = {
-              "pipeline": [
-                merged,
-                {"type": "filters.range", "limits": "ReturnNumber[1:1]"},
-                {
-                  "type": "writers.gdal",
-                  "filename": dsm_tif,
-                  "resolution": 1,
-                  "output_type": "max",
-                  "data_type": "float32",
-                  "gdaldriver": "GTiff",
-                  "nodata": -9999
+                # DSM
+                dsm_pipeline = {
+                  "pipeline": [
+                    merged,
+                    {"type": "filters.range", "limits": "ReturnNumber[1:1]"},
+                    {
+                      "type": "writers.gdal",
+                      "filename": dsm_tif,
+                      "resolution": 1,
+                      "output_type": "max",
+                      "data_type": "float32",
+                      "gdaldriver": "GTiff",
+                      "nodata": -9999
+                    }
+                  ]
                 }
-              ]
+                pl = pdal.Pipeline(json.dumps(dsm_pipeline))
+                pl.execute()
+                LOGGER.info("Built dsm.tif")
+
+                # CHM
+                with rasterio.open(dsm_tif) as dsmd:
+                    dsm_array = dsmd.read(1)
+                    dsm_meta = dsmd.meta
+                with rasterio.open(dem_tif) as demd:
+                    dem_array = demd.read(1)
+                    dem_meta = demd.meta
+
+                chm = dsm_array - dem_array
+                chm[chm < 0] = 0
+
+                canopy_threshold = 5
+                chm_masked = np.where(chm <= canopy_threshold, chm, dsm_meta['nodata'])
+
+                dsm_meta.update(dtype='float32', nodata=0)
+                with rasterio.open(f'{output_folder}/chm.tif', 'w', **dsm_meta) as dst:
+                    dst.write(chm_masked.astype('float32'), 1)
+
+                high_canopy = np.where(chm > canopy_threshold, chm, 0)
+                with rasterio.open(f'{output_folder}/chm_high_canopy.tif', 'w', **dsm_meta) as dst:
+                    dst.write(high_canopy.astype('float32'), 1)
+
+                LOGGER.info("Built chm.tif and chm_high_canopy.tif")
+
+                # TPI
+                window_size = 9  # adjust for scale
+                mean_dem = uniform_filter(dem_array, size=window_size, mode='nearest')
+                tpi = dem_array - mean_dem
+                with rasterio.open(f"{output_folder}/tpi.tif", 'w', **dem_meta) as dst:
+                    dst.write(tpi.astype('float32'), 1)
+
+                # LRM
+                smoothed = uniform_filter(dem_array, size=30, mode='nearest')
+                lrm = dem_array - smoothed
+                with rasterio.open(f"{output_folder}/lrm.tif", 'w', **dem_meta) as dst:
+                    dst.write(lrm.astype('float32'), 1)
+
+                LOGGER.info("Saved TPI and LRM rasters.")
+            except Exception as e:
+                LOGGER.exception(f"Error in terrain attributes: {e}")
+
+            return {
+                "dem_high_resolution" : (dem_s3_url, dem_png_filename, dem_png_size),
+                "hillshade_high_resolution" : (hillshade_s3_url, hillshade_png_filename, hillshade_png_size)
             }
-            pl = pdal.Pipeline(json.dumps(dsm_pipeline))
-            pl.execute()
-            LOGGER.info("Built dsm.tif")
-
-            # CHM
-            with rasterio.open(dsm_tif) as dsmd:
-                dsm_array = dsmd.read(1)
-                dsm_meta = dsmd.meta
-            with rasterio.open(dem_tif) as demd:
-                dem_array = demd.read(1)
-                dem_meta = demd.meta
-
-            chm = dsm_array - dem_array
-            chm[chm < 0] = 0
-
-            canopy_threshold = 5
-            chm_masked = np.where(chm <= canopy_threshold, chm, dsm_meta['nodata'])
-
-            dsm_meta.update(dtype='float32', nodata=0)
-            with rasterio.open(f'{output_folder}/chm.tif', 'w', **dsm_meta) as dst:
-                dst.write(chm_masked.astype('float32'), 1)
-
-            high_canopy = np.where(chm > canopy_threshold, chm, 0)
-            with rasterio.open(f'{output_folder}/chm_high_canopy.tif', 'w', **dsm_meta) as dst:
-                dst.write(high_canopy.astype('float32'), 1)
-
-            LOGGER.info("Built chm.tif and chm_high_canopy.tif")
-
-            # TPI
-            window_size = 9  # adjust for scale
-            mean_dem = uniform_filter(dem_array, size=window_size, mode='nearest')
-            tpi = dem_array - mean_dem
-            with rasterio.open(f"{output_folder}/tpi.tif", 'w', **dem_meta) as dst:
-                dst.write(tpi.astype('float32'), 1)
-
-            # LRM
-            smoothed = uniform_filter(dem_array, size=30, mode='nearest')
-            lrm = dem_array - smoothed
-            with rasterio.open(f"{output_folder}/lrm.tif", 'w', **dem_meta) as dst:
-                dst.write(lrm.astype('float32'), 1)
-
-            LOGGER.info("Saved TPI and LRM rasters.")
-            return {"dem_png_path" : dem_png_path}
         else:
             LOGGER.info("No lidar tiles found.")
             return None
@@ -242,10 +263,7 @@ def convert_dem_to_png(tif_path, png_path=None, colormap='terrain', hillshade=Tr
     str
         Path to the created PNG file
     """
-    import rasterio
-    import numpy as np
-    from matplotlib.colors import LightSource, Normalize
-    from PIL import Image
+
 
     if png_path is None:
         png_path = tif_path.replace('.tif', '.png')
@@ -284,5 +302,5 @@ def convert_dem_to_png(tif_path, png_path=None, colormap='terrain', hillshade=Tr
         hill_img.save(hillshade_path)
         LOGGER.info(f"✅ Hillshade image saved to {hillshade_path}")
 
-    LOGGER.info(f"DEM converted to PNG: {png_path}")
-    return png_path
+    LOGGER.info(f"DEM converted to PNG: {png_path} {hillshade_path}")
+    return {"dem": (png_path, img.size), "hillshade": (hillshade_path, hill_img.size)}
