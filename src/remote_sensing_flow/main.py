@@ -7,7 +7,7 @@ from crewai.flow.persistence import persist
 import logging
 import argparse
 from openai import OpenAI
-
+from remote_sensing_flow.tools.lidar_data import get_lidar_data
 from remote_sensing_flow.helpers import get_llm, model_41_mini, model_o4_mini, model_o3, \
     get_markdown_image_analysis, model_41, safe_kickoff, draw_hotspots_on_image, \
     get_markdown_closest_known_site, get_closest_known_site
@@ -25,7 +25,7 @@ formatter = logging.Formatter("%(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 LOGGER.addHandler(handler)
 
-@persist(verbose=True)
+# @persist(verbose=True)
 class RemoteSensingFlow(Flow[RemoteSensingState]):
 
     output_root_folder: str = 'output'
@@ -90,7 +90,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                  "Do not perform any satellite imagery analysis unless already done by someone else and published.",
             backstory="Expert in archaeological studies and historical research. Language expert.",
             tools=[
-                SearchTool()
+                # SearchTool()
             ],
             llm=get_llm(model_41_mini, 0.3),
             verbose=True,
@@ -139,7 +139,7 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
                 with open(known_sites_check_results_path, "w") as f:
                     f.write(get_markdown_closest_known_site(closest_known_site))
                 self.state.closest_known_site = closest_known_site
-                return closest_known_site
+                return {"closest_known_site": closest_known_site}
             else:
                 LOGGER.info(f"Closest known site not found")
                 return {"No known sites found"}
@@ -152,12 +152,16 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
             return {"error": str(e)}
 
     @listen(check_known_sites)
-    async def collect_data(self, research_output):
-
+    async def collect_data(self, closest_known_site):
+        LOGGER.info("Collecting data...")
         bbox_images = self.state.potential_site.bbox.as_tuple()
-        # if user did not specify --exact we calculate a bbox for the images with a radius of 10km
+        # if user did not specify --exact we calculate a bbox for the images with a radius of 5km
         if not self.state.user_input or not self.state.user_input.exact:
             bbox_images = self.state.potential_site.bbox_images.as_tuple()
+
+        # Check for available LiDAR tiles
+        LOGGER.info("Check for available LiDAR tiles...")
+        lidar_data = get_lidar_data(bbox_images, self.output_folder)
 
         images = await SentinelS3PngUploader()._run(self.state.potential_site.lat, self.state.potential_site.lon,
                                                     bbox_images, self.output_folder)
@@ -217,14 +221,17 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
         with open(report_file_path, "a") as f:
             f.write("\n\n==========\n\n" + json.dumps(messages))
 
+        # Using openAI API instead of Azure OpenAI API because Azure does not have responses API yet
+        # and only there we can set the image detail
         # response = llm.call(messages=messages)
 
         client = OpenAI()
         response = client.responses.parse(
-            model="gpt-4.1-mini-2025-04-14",
+            model="gpt-4.1-mini-2025-04-14",  # TODO: Switch to o3 for better results, keep 4.1 and o4-mini for debug and tests
             input=messages,
             text_format=ImageAnalysis,
-            temperature=0
+            temperature=0,
+            # reasoning={"effort": "medium"}  # TODO: switch to high for better results
         )
 
         LOGGER.info(response.output_parsed)

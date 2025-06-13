@@ -119,7 +119,11 @@ Agent will check the coordinates for textual or historical significants and add 
 This command initializes the `remote_sensing_flow` Flow.
 
 The result will be a folder with satellite images and .md files (mainly `report.md`) in the `output/{potential_site_name}/`.
-For examples see `output_example/`
+For examples see `output_example/`.
+
+In case the script finds LiDAR tiles in the range of the potential site it will download and process them. 
+These artifacts will be found in the `output/{potential_site_name}/lidar/`. Importing in a tool like QGIS will help 
+ visualize the resulted imagery (if you want to overlap with basemap, do not forget to setting the right CRS) 
 
 ## Output Report Example
 

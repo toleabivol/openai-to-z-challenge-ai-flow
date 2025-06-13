@@ -137,6 +137,7 @@ class Location(BaseModel):
     @computed_field
     @property
     def bbox_images(self) -> BBox:
+        # 5km will result in an image of 500px which is ok for the LLM
         radius = max(self.radius, 5000)
         # 2500px diameter is the limit on sentinel hub api, with 10m/p that is 25000m diameter and 12500 radius
         radius = min(radius, 12400)

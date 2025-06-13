@@ -49,7 +49,7 @@ def get_llm(model_name: str, temperature: float = None) -> LLM:
 
 def get_markdown_potential_site(potential_site: PotentialSite) -> str:
     template_str = """
-    ### 🏷️ Potential Site
+    ### Potential Site
 
     **Name:** `{{ site.name }}`  
     **Latitude:** `{{ site.lat }}`  
@@ -58,13 +58,13 @@ def get_markdown_potential_site(potential_site: PotentialSite) -> str:
 
     ---
 
-    #### 🧠 Rationale
+    #### Rationale
 
     {{ site.rationale }}
 
     ---
 
-    #### 🗺️ Maps
+    #### Maps
 
     {% for url in site.maps %}
     - [{{ url }}]({{ url }})
@@ -72,7 +72,7 @@ def get_markdown_potential_site(potential_site: PotentialSite) -> str:
 
     ---
 
-    #### 📚 Sources
+    #### Sources
 
     {% for src in site.sources %}
     - {{ src }}
