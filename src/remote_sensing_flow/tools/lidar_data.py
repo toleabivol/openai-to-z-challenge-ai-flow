@@ -1,7 +1,4 @@
-import datetime
 import os
-import rasterio
-import numpy as np
 from matplotlib.colors import LightSource, Normalize
 from PIL import Image
 import earthaccess
@@ -43,7 +40,7 @@ async def get_lidar_data(bbox, root_output_folder):
 
         if results:
 
-            LOGGER.info(len(results))
+            LOGGER.info(f"Found nr results: {len(results)}")
             LOGGER.info(results)
 
             files = earthaccess.download(results, input_folder)
@@ -290,17 +287,17 @@ def convert_dem_to_png(tif_path, png_path=None, colormap='terrain', hillshade=Tr
         # Create a PIL image and save as PNG
         img = Image.fromarray(dem_uint8)
         img.save(png_path)
-        LOGGER.info(f"✅ DEM converted and saved to {png_path}")
+        LOGGER.info(f"DEM converted and saved to {png_path}")
 
         # Generate hillshade using matplotlib's LightSource
         ls = LightSource(azdeg=315, altdeg=45)
-        hillshade = ls.hillshade(dem.filled(np.nan), vert_exag=1.0, dx=1, dy=1)
+        hillshade_data = ls.hillshade(dem.filled(np.nan), vert_exag=1.0, dx=1, dy=1)
 
-        # Convert hillshade to 8-bit
-        hillshade_uint8 = (hillshade * 255).astype(np.uint8)
+        # Convert hillshade to 8-bit, Replace NaNs with 0 before casting
+        hillshade_uint8 = (np.nan_to_num(hillshade_data, nan=0.0) * 255).astype(np.uint8)
         hill_img = Image.fromarray(hillshade_uint8)
         hill_img.save(hillshade_path)
-        LOGGER.info(f"✅ Hillshade image saved to {hillshade_path}")
+        LOGGER.info(f"Hillshade image saved to {hillshade_path}")
 
     LOGGER.info(f"DEM converted to PNG: {png_path} {hillshade_path}")
     return {"dem": (png_path, img.size), "hillshade": (hillshade_path, hill_img.size)}
