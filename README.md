@@ -138,6 +138,12 @@ In case the script finds LiDAR tiles in the range of the potential site it will 
 These artifacts will be found in the `output/{potential_site_name}/lidar/`. Importing in a tool like QGIS will help 
  visualize the resulted imagery (if you want to overlap with basemap, do not forget to setting the right CRS) 
 
+## TODO
+
+- Integrate mode LiDAR sources
+- Add hotspots on LiDAR derived images
+- sweeping algo - input a bigger bbox and let the script split it into regions and process them one by one
+
 ## Output Report Example
 
 Verified Archaeological Site Report  
