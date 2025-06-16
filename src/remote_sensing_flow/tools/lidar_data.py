@@ -41,10 +41,10 @@ async def get_lidar_data(bbox, root_output_folder):
         if results:
 
             LOGGER.info(f"Found nr results: {len(results)}")
-            LOGGER.info(results)
+            LOGGER.debug(results)
 
             files = earthaccess.download(results, input_folder)
-            LOGGER.info(files)
+            LOGGER.debug(files)
 
             # === START keep one version of each
             merged = f"{output_folder}/merged.laz"
@@ -76,7 +76,7 @@ async def get_lidar_data(bbox, root_output_folder):
                     {"type": "writers.las", "filename": merged}
                 ]
             }
-
+            LOGGER.info(f"Merging .laz files")
             pipeline = pdal.Pipeline(json.dumps(merge_pipeline))
             pipeline.execute()
             LOGGER.info(f"Merged .laz saved as {merged}")
@@ -115,16 +115,19 @@ async def get_lidar_data(bbox, root_output_folder):
             pipeline.execute()
             LOGGER.info(f"DEM generated: {dem_tif}")
 
-            dem_png_files = convert_dem_to_png(dem_tif)
+            dem_png_filename = create_safe_filename(f"dem_high_resolution_{bbox[0]}_{bbox[1]}",
+                                                    '.png', True)
+            hillshade_png_filename = create_safe_filename(f"hillshade_high_resolution_{bbox[0]}_{bbox[1]}",
+                                                          '.png', True)
+
+            dem_png_files = convert_dem_to_png(dem_tif, os.path.join(root_output_folder, dem_png_filename), os.path.join(root_output_folder, hillshade_png_filename))
 
             dem_png_path, dem_png_size = dem_png_files["dem"]
-            dem_png_filename = create_safe_filename(f"dem_high_resolution_{bbox[0]}_{bbox[1]}",
-                                            '.png', True)
+
             dem_s3_url = await s3_upload_and_get_link(dem_png_path, 'earthaccess', dem_png_filename)
 
             hillshade_png_path, hillshade_png_size = dem_png_files["hillshade"]
-            hillshade_png_filename = create_safe_filename(f"hillshade_high_resolution_{bbox[0]}_{bbox[1]}",
-                                            '.png', True)
+
             hillshade_s3_url = await s3_upload_and_get_link(hillshade_png_path, 'earthaccess', hillshade_png_filename)
 
             try:
@@ -240,31 +243,15 @@ async def get_lidar_data(bbox, root_output_folder):
         return None
 
 
-def convert_dem_to_png(tif_path, png_path=None, colormap='terrain', hillshade=True):
+def convert_dem_to_png(tif_path, dem_png_path=None, hillshade_png_path=None):
     """
-    Convert a DEM TIF file to a visually appealing PNG image.
-
-    Parameters:
-    -----------
-    tif_path : str
-        Path to the input DEM TIF file
-    png_path : str, optional
-        Path for the output PNG file. If None, will use the same name as input with .png extension
-    colormap : str, optional
-        Matplotlib colormap to use for elevation visualization (default: 'terrain')
-    hillshade : bool, optional
-        Whether to apply hillshading for 3D effect (default: True)
-
-    Returns:
-    --------
-    str
-        Path to the created PNG file
+    Convert a DEM TIF file to visually appealing PNG images.
     """
 
-
-    if png_path is None:
-        png_path = tif_path.replace('.tif', '.png')
-    hillshade_path = png_path.replace('.png', '_hillshade.png')
+    if dem_png_path is None:
+        dem_png_path = tif_path.replace('.tif', '.png')
+    if hillshade_png_path is None:
+        hillshade_png_path = dem_png_path.replace('.png', '_hillshade.png')
 
     with rasterio.open(tif_path) as src:
         dem = src.read(1)  # Read the first band
@@ -286,8 +273,8 @@ def convert_dem_to_png(tif_path, png_path=None, colormap='terrain', hillshade=Tr
 
         # Create a PIL image and save as PNG
         img = Image.fromarray(dem_uint8)
-        img.save(png_path)
-        LOGGER.info(f"DEM converted and saved to {png_path}")
+        img.save(dem_png_path)
+        LOGGER.info(f"DEM converted and saved to {dem_png_path}")
 
         # Generate hillshade using matplotlib's LightSource
         ls = LightSource(azdeg=315, altdeg=45)
@@ -296,8 +283,8 @@ def convert_dem_to_png(tif_path, png_path=None, colormap='terrain', hillshade=Tr
         # Convert hillshade to 8-bit, Replace NaNs with 0 before casting
         hillshade_uint8 = (np.nan_to_num(hillshade_data, nan=0.0) * 255).astype(np.uint8)
         hill_img = Image.fromarray(hillshade_uint8)
-        hill_img.save(hillshade_path)
-        LOGGER.info(f"Hillshade image saved to {hillshade_path}")
+        hill_img.save(hillshade_png_path)
+        LOGGER.info(f"Hillshade image saved to {hillshade_png_path}")
 
-    LOGGER.info(f"DEM converted to PNG: {png_path} {hillshade_path}")
-    return {"dem": (png_path, img.size), "hillshade": (hillshade_path, hill_img.size)}
+    LOGGER.info(f"DEM converted to PNG: {dem_png_path} {hillshade_png_path}")
+    return {"dem": (dem_png_path, img.size), "hillshade": (hillshade_png_path, hill_img.size)}

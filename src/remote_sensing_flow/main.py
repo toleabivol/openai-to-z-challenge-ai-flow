@@ -232,11 +232,11 @@ class RemoteSensingFlow(Flow[RemoteSensingState]):
 
         client = OpenAI()
         response = client.responses.parse(
-            model="gpt-4.1-mini-2025-04-14",  # TODO: Switch to o3 for better results, keep 4.1 and o4-mini for debug and tests
+            model="o3",  # TODO: Switch to o3 for better results, keep 4.1 and o4-mini for debug and tests
             input=messages,
             text_format=ImageAnalysis,
-            temperature=0,
-            # reasoning={"effort": "medium"}  # TODO: switch to high for better results
+            # temperature=0,  # not supported with o3
+            reasoning={"effort": "high"}  # TODO: switch to high for better results
         )
 
         LOGGER.info(response.output_parsed)
